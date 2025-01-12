@@ -1,108 +1,88 @@
-# CTManager
+# CTManager (Cloudflared Tunnel Manager)
 
-CTManager is a middleware system designed to integrate FOSSBilling with Hiddify, automating the process of managing VPN/proxy user accounts based on license purchases.
+A Flutter desktop application for managing Cloudflare Tunnel (cloudflared) instances with a user-friendly interface.
 
-## 🚀 Features
+## Features
 
-- **Automated License Management**: Synchronizes FOSSBilling licenses with Hiddify user accounts
-- **Real-time Updates**: Monitors and processes license changes automatically
-- **Secure Integration**: Implements secure database operations and API interactions
-- **Error Handling**: Comprehensive error catching and logging system
+- 🚇 Create and manage Cloudflare Tunnels
+- 🔄 Monitor tunnel status in real-time
+- 💾 Local SQLite database for tunnel configuration storage
+- 🔧 Automatic cloudflared binary installation and management
+- 🖥️ Cross-platform support (Windows, macOS, Linux)
+- 🎨 Material Design UI
+- 📝 Detailed logging system
 
-## 🛠️ Technical Architecture
+## Prerequisites
 
-### Core Components
+- Flutter SDK (>=2.18.0)
+- Dart SDK
+- A Cloudflare account with Tunnels enabled
 
-1. **DatabasePoller**
-   - Monitors FOSSBilling database for new/updated licenses
-   - Processes unhandled license changes
-   - Manages license status synchronization
-
-2. **LicenseManager**
-   - Creates and updates Hiddify user accounts
-   - Handles UUID generation
-   - Calculates license durations
-
-3. **HiddifyAPI**
-   - Manages Hiddify service integration
-   - Handles user creation and updates
-   - Processes API communications
-
-## 📋 Prerequisites
-
-- PHP 7.4 or higher
-- MySQL/MariaDB
-- FOSSBilling installation
-- Hiddify server setup
-- Composer (PHP package manager)
-
-## 🔧 Installation
+## Installation
 
 1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/ctmanager.git
-   ```
+```bash
+git clone https://github.com/yourusername/ctmanager.git
+cd ctmanager
+```
 
 2. Install dependencies:
-   ```bash
-   composer install
-   ```
+```bash
+flutter pub get
+```
 
-3. Configure your environment:
-   - Copy `.env.example` to `.env`
-   - Update database credentials
-   - Set Hiddify API configuration
+3. Run the application:
+```bash
+flutter run
+```
 
-4. Set up the database:
-   ```bash
-   php migrations/migrate.php
-   ```
+## Project Structure
 
-## ⚙️ Configuration
+```
+lib/
+├── main.dart              # Application entry point
+├── models/               # Data models
+├── providers/            # State management
+├── services/            # Business logic and external services
+│   ├── cloudflared_service.dart    # Cloudflared interaction
+│   ├── database_service.dart       # SQLite database operations
+│   └── install_cloudflared.dart    # Cloudflared installation
+└── ui/                  # User interface components
+    ├── home_page.dart
+    └── tunnel_form.dart
+```
 
-1. FOSSBilling Connection:
-   - Configure database credentials
-   - Set up polling interval
+## Dependencies
 
-2. Hiddify Integration:
-   - Configure API endpoint
-   - Set authentication details
-   - Define default user settings
+- `provider`: State management
+- `sqflite_common_ffi`: SQLite database
+- `path_provider`: File system access
+- `http`: Network requests
+- `shared_preferences`: Local storage
+- `logger`: Logging system
 
-## 🔍 Monitoring and Logging
+## Development
 
-- Logs are stored in the `logs` directory
-- Monitor system status through the admin interface
-- Check error logs for troubleshooting
+The application is built with Flutter and follows the Provider pattern for state management. It uses:
 
-## 🤝 Contributing
+- SQLite for persistent storage
+- Material Design for the user interface
+- Platform-specific code for native functionality
+
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📝 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🆘 Support
+## Acknowledgments
 
-For support and questions:
-- Open an issue on GitHub
-- Contact the development team
-- Check the documentation
-
-## 🔐 Security
-
-- Uses prepared statements for database queries
-- Implements secure API communication
-- Follows security best practices
-
-## 🗺️ Roadmap
-
-- [ ] Add support for multiple Hiddify servers
-- [ ] Implement advanced monitoring dashboard
-- [ ] Add backup and restore functionality
-- [ ] Enhance error reporting and notifications
+- Cloudflare for their excellent Tunnels service
+- Flutter team for the amazing framework
+- All contributors who participate in this project
