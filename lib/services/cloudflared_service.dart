@@ -16,6 +16,11 @@ class CloudflaredService {
   final Map<int, Process> _processes = {};
 
   Future<void> startTunnel(Tunnel tunnel) async {
+    if (!tunnel.isLocal) {
+      _logger.e('Cannot start a remote tunnel');
+      return;
+    }
+
     if (_processes.containsKey(tunnel.id)) {
       _logger.w('Tunnel ${tunnel.id} is already running.');
       return;
@@ -79,6 +84,11 @@ class CloudflaredService {
   }
 
   Future<void> stopTunnel(Tunnel tunnel) async {
+    if (!tunnel.isLocal) {
+      _logger.e('Cannot stop a remote tunnel');
+      return;
+    }
+
     final process = _processes[tunnel.id!];
     if (process != null) {
       process.kill();
@@ -90,7 +100,9 @@ class CloudflaredService {
   }
 
   bool isTunnelRunning(Tunnel tunnel) {
-    return _processes.containsKey(tunnel.id);
+    if (!tunnel.isLocal) return false;
+    // Check both specific process and general running state
+    return _processes.isNotEmpty;
   }
 
   Future<bool> _checkPortAvailability(int port) async {
@@ -379,6 +391,57 @@ ingress:
     } catch (e) {
       _logger.e('Error getting local tunnel info: $e');
       return null;
+    }
+  }
+
+  Future<void> detectRunningTunnel() async {
+    try {
+      // Get local tunnel info
+      final localTunnel = await getLocalTunnelInfo();
+      if (localTunnel == null) return;
+
+      // Check if cloudflared is running
+      ProcessResult result;
+      if (Platform.isWindows) {
+        result = await Process.run('powershell', ['-Command', 'Get-Process cloudflared -ErrorAction SilentlyContinue'], runInShell: true);
+      } else {
+        result = await Process.run('pgrep', ['cloudflared']);
+      }
+
+      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        // Found running cloudflared process
+        _logger.i('Detected running cloudflared process');
+        
+        // Check if the tunnel is actually running by trying to connect
+        final isRunning = await _checkTunnelConnection(localTunnel['domain']);
+        if (isRunning) {
+          // Add to processes map with a dummy process
+          // We can't get the actual Process object for an existing process
+          final dummyProcess = await Process.start('cmd', ['/c', 'echo dummy']);
+          _processes[-1] = dummyProcess;
+          _logger.i('Successfully detected and tracked running tunnel: ${localTunnel['domain']}');
+        }
+      }
+    } catch (e) {
+      _logger.e('Error detecting running tunnel: $e');
+    }
+  }
+
+  Future<bool> _checkTunnelConnection(String domain) async {
+    try {
+      // Try to make a connection to the tunnel
+      final uri = Uri.parse('https://$domain');
+      final client = HttpClient();
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      await response.drain(); // Dispose of the response
+      client.close();
+      
+      // Any response means the tunnel is running
+      return true;
+    } catch (e) {
+      _logger.e('Error checking tunnel connection: $e');
+      return false;
     }
   }
 }

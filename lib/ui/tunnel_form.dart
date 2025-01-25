@@ -36,7 +36,7 @@ class _TunnelFormState extends State<TunnelForm> {
     super.initState();
     _protocol = widget.tunnel?.protocol ?? widget.initialProtocol ?? 'RDP';
     _portController = TextEditingController(
-      text: widget.tunnel?.port ?? widget.initialPort ?? (_protocol == 'RDP' ? '4000' : '4001')
+      text: widget.tunnel?.port ?? widget.initialPort ?? '4000'
     );
     _domainController = TextEditingController(
       text: widget.tunnel?.domain ?? widget.initialDomain ?? ''

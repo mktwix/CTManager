@@ -11,34 +11,61 @@ class TunnelProvider extends ChangeNotifier {
   final DatabaseService _dbService = DatabaseService();
   final CloudflaredService _cfService = CloudflaredService();
   final Logger _logger = Logger();
-  bool _isLoading = false;
+  bool _isLoading = true;
   bool _isInitialized = false;
 
   List<Tunnel> get tunnels => _tunnels;
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
 
+  TunnelProvider() {
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      _isLoading = true;
+      notifyListeners();
+
+      // Initialize database
+      await _dbService.init();
+      _isInitialized = true;
+
+      // Detect any running tunnel first
+      await _cfService.detectRunningTunnel();
+
+      // Load initial data
+      await loadTunnels();
+    } catch (e) {
+      _logger.e('Error initializing TunnelProvider: $e');
+      _tunnels = [];
+      _isInitialized = true;
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> loadTunnels() async {
-    if (_isLoading) return;
-    _isLoading = true;
-    notifyListeners();
+    if (!_isInitialized) {
+      _logger.w('Trying to load tunnels before initialization');
+      return;
+    }
 
     try {
-      // Initialize database if not already initialized
-      if (!_isInitialized) {
-        await _dbService.init();
-        _isInitialized = true;
-      }
+      _isLoading = true;
+      notifyListeners();
 
       _tunnels = await _dbService.getTunnels();
       
-      // Update running status
+      // Only check running status for local tunnel
       for (var tunnel in _tunnels) {
-        try {
-          tunnel.isRunning = _cfService.isTunnelRunning(tunnel);
-        } catch (e) {
-          _logger.e('Error checking tunnel status: $e');
-          tunnel.isRunning = false;
+        if (tunnel.isLocal) {
+          try {
+            tunnel.isRunning = _cfService.isTunnelRunning(tunnel);
+          } catch (e) {
+            _logger.e('Error checking tunnel status: $e');
+            tunnel.isRunning = false;
+          }
         }
       }
     } catch (e) {
@@ -52,6 +79,15 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<bool> addTunnel(Tunnel tunnel) async {
     try {
+      // Ensure only one local tunnel exists
+      if (tunnel.isLocal) {
+        final existingLocalTunnel = _tunnels.any((t) => t.isLocal);
+        if (existingLocalTunnel) {
+          _logger.e('A local tunnel already exists');
+          return false;
+        }
+      }
+
       final id = await _dbService.insertTunnel(tunnel);
       if (id != -1) {
         await loadTunnels();
@@ -94,6 +130,10 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<bool> startTunnel(Tunnel tunnel) async {
     try {
+      if (!tunnel.isLocal) {
+        _logger.e('Cannot start a remote tunnel');
+        return false;
+      }
       await _cfService.startTunnel(tunnel);
       tunnel.isRunning = true;
       notifyListeners();
@@ -106,6 +146,10 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<bool> stopTunnel(Tunnel tunnel) async {
     try {
+      if (!tunnel.isLocal) {
+        _logger.e('Cannot stop a remote tunnel');
+        return false;
+      }
       await _cfService.stopTunnel(tunnel);
       tunnel.isRunning = false;
       notifyListeners();
@@ -118,13 +162,14 @@ class TunnelProvider extends ChangeNotifier {
 
   void terminateAllTunnels() {
     for (var tunnel in _tunnels) {
-      if (tunnel.isRunning) {
+      if (tunnel.isLocal && tunnel.isRunning) {
         _cfService.stopTunnel(tunnel);
       }
     }
   }
 
   bool isTunnelRunning(Tunnel tunnel) {
+    if (!tunnel.isLocal) return false;
     return _cfService.isTunnelRunning(tunnel);
   }
 

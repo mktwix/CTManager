@@ -31,12 +31,14 @@ class DatabaseService {
     _isInitializing = true;
     try {
       // Initialize sqflite for FFI
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
+      if (Platform.isWindows || Platform.isLinux) {
+        sqfliteFfiInit();
+        databaseFactory = databaseFactoryFfi;
+      }
 
       // Determine the path to the database file
-      final Directory appDocDir = await getApplicationDocumentsDirectory();
-      final String dbPath = p.join(appDocDir.path, 'ctmanager.db');
+      final Directory appDir = await getApplicationSupportDirectory();
+      final String dbPath = p.join(appDir.path, 'ctmanager.db');
 
       // Ensure the directory exists
       final dbDir = Directory(p.dirname(dbPath));
@@ -44,13 +46,28 @@ class DatabaseService {
         await dbDir.create(recursive: true);
       }
 
-      // Open the database
-      _database = await databaseFactory.openDatabase(dbPath, options: OpenDatabaseOptions(
-        version: 1,
-        onCreate: _onCreate,
-      ));
-
-      _logger.i('Database initialized at $dbPath');
+      // Open the database with retry logic
+      int retryCount = 0;
+      while (retryCount < 3) {
+        try {
+          _database = await databaseFactory.openDatabase(
+            dbPath,
+            options: OpenDatabaseOptions(
+              version: 1,
+              onCreate: _onCreate,
+            ),
+          );
+          _logger.i('Database initialized at $dbPath');
+          break;
+        } catch (e) {
+          retryCount++;
+          _logger.w('Failed to open database (attempt $retryCount): $e');
+          if (retryCount >= 3) {
+            throw Exception('Failed to open database after 3 attempts: $e');
+          }
+          await Future.delayed(Duration(seconds: 1));
+        }
+      }
     } catch (e) {
       _logger.e('Error initializing database: $e');
       rethrow;

@@ -35,9 +35,9 @@ class _StatusDialogState extends State<StatusDialog> {
     // Get local tunnel info
     final localTunnel = await _cfService.getLocalTunnelInfo();
     
-    // Check port status for common ports
-    final ports = [3389, 22]; // Default RDP and SSH ports
-    for (int port = 4000; port < 4010; port++) { // Check first 10 ports in our range
+    // Check port availability
+    final ports = <int>[];
+    for (int port = 4000; port < 4020; port++) { // Check first 20 ports in our range
       ports.add(port);
     }
     
@@ -210,18 +210,7 @@ class _StatusDialogState extends State<StatusDialog> {
                   _buildSection(
                     'Port Status',
                     [
-                      _buildStatusItem(
-                        'RDP (3389)',
-                        _portStatus['3389'] == true ? 'Available' : 'In Use',
-                        _portStatus['3389'] == true,
-                      ),
-                      _buildStatusItem(
-                        'SSH (22)',
-                        _portStatus['22'] == true ? 'Available' : 'In Use',
-                        _portStatus['22'] == true,
-                      ),
-                      const SizedBox(height: 8),
-                      const Text('Custom Ports (4000+):'),
+                      const Text('Available Ports (4000+):'),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 8,

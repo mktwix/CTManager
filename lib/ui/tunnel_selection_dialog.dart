@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 import '../services/cloudflared_service.dart';
 
 class TunnelSelectionDialog extends StatefulWidget {
-  const TunnelSelectionDialog({super.key});
+  final String protocol;
+  
+  const TunnelSelectionDialog({
+    super.key,
+    required this.protocol,
+  });
 
   @override
   State<TunnelSelectionDialog> createState() => _TunnelSelectionDialogState();
