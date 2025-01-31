@@ -7,16 +7,16 @@ import '../services/cloudflared_service.dart';
 import 'package:logger/logger.dart';
 
 class TunnelProvider extends ChangeNotifier {
-  List<Tunnel> _tunnels = [];
-  final DatabaseService _dbService = DatabaseService();
   final CloudflaredService _cfService = CloudflaredService();
   final Logger _logger = Logger();
+  
   bool _isLoading = true;
-  bool _isInitialized = false;
+  Map<String, String>? _runningTunnel;
+  Map<String, String> _forwardingStatus = {};
 
-  List<Tunnel> get tunnels => _tunnels;
   bool get isLoading => _isLoading;
-  bool get isInitialized => _isInitialized;
+  Map<String, String>? get runningTunnel => _runningTunnel;
+  Map<String, String> get forwardingStatus => _forwardingStatus;
 
   TunnelProvider() {
     _initialize();
@@ -27,156 +27,70 @@ class TunnelProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      // Initialize database
-      await _dbService.init();
-      _isInitialized = true;
-
-      // Detect any running tunnel first
-      await _cfService.detectRunningTunnel();
-
-      // Load initial data
-      await loadTunnels();
-    } catch (e) {
-      _logger.e('Error initializing TunnelProvider: $e');
-      _tunnels = [];
-      _isInitialized = true;
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> loadTunnels() async {
-    if (!_isInitialized) {
-      _logger.w('Trying to load tunnels before initialization');
-      return;
-    }
-
-    try {
-      _isLoading = true;
-      notifyListeners();
-
-      _tunnels = await _dbService.getTunnels();
-      
-      // Only check running status for local tunnel
-      for (var tunnel in _tunnels) {
-        if (tunnel.isLocal) {
-          try {
-            tunnel.isRunning = _cfService.isTunnelRunning(tunnel);
-          } catch (e) {
-            _logger.e('Error checking tunnel status: $e');
-            tunnel.isRunning = false;
-          }
-        }
+      // Check if cloudflared is installed
+      final isInstalled = await _cfService.isCloudflaredInstalled();
+      if (!isInstalled) {
+        _logger.e('Cloudflared is not installed');
+        return;
       }
+
+      // Get running tunnel info
+      await checkRunningTunnel();
     } catch (e) {
-      _logger.e('Error loading tunnels: $e');
-      _tunnels = [];
+      _logger.e('Error initializing TunnelProvider', e);
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  Future<bool> addTunnel(Tunnel tunnel) async {
+  Future<void> checkRunningTunnel() async {
     try {
-      // Ensure only one local tunnel exists
-      if (tunnel.isLocal) {
-        final existingLocalTunnel = _tunnels.any((t) => t.isLocal);
-        if (existingLocalTunnel) {
-          _logger.e('A local tunnel already exists');
-          return false;
-        }
-      }
-
-      final id = await _dbService.insertTunnel(tunnel);
-      if (id != -1) {
-        await loadTunnels();
-        return true;
-      }
-      return false;
+      _runningTunnel = await _cfService.getRunningTunnelInfo();
+      notifyListeners();
     } catch (e) {
-      _logger.e('Error adding tunnel: $e');
-      return false;
+      _logger.e('Error checking running tunnel', e);
     }
   }
 
-  Future<bool> updateTunnel(Tunnel tunnel) async {
+  Future<bool> startForwarding(String domain, String port) async {
     try {
-      final rowsAffected = await _dbService.updateTunnel(tunnel);
-      if (rowsAffected > 0) {
-        await loadTunnels();
-        return true;
-      }
-      return false;
-    } catch (e) {
-      _logger.e('Error updating tunnel: $e');
-      return false;
-    }
-  }
-
-  Future<bool> deleteTunnel(int id) async {
-    try {
-      final rowsAffected = await _dbService.deleteTunnel(id);
-      if (rowsAffected > 0) {
-        await loadTunnels();
-        return true;
-      }
-      return false;
-    } catch (e) {
-      _logger.e('Error deleting tunnel: $e');
-      return false;
-    }
-  }
-
-  Future<bool> startTunnel(Tunnel tunnel) async {
-    try {
-      if (!tunnel.isLocal) {
-        _logger.e('Cannot start a remote tunnel');
+      if (_runningTunnel == null) {
+        _logger.e('No running tunnel found');
         return false;
       }
-      await _cfService.startTunnel(tunnel);
-      tunnel.isRunning = true;
-      notifyListeners();
-      return true;
+
+      final success = await _cfService.startPortForwarding(domain, port);
+      if (success) {
+        _forwardingStatus[domain] = port;
+        notifyListeners();
+      }
+      return success;
     } catch (e) {
-      _logger.e('Error starting tunnel: $e');
+      _logger.e('Error starting forwarding', e);
       return false;
     }
   }
 
-  Future<bool> stopTunnel(Tunnel tunnel) async {
+  Future<void> stopForwarding(String domain) async {
     try {
-      if (!tunnel.isLocal) {
-        _logger.e('Cannot stop a remote tunnel');
-        return false;
+      final port = _forwardingStatus[domain];
+      if (port != null) {
+        await _cfService.stopPortForwarding(port);
+        _forwardingStatus.remove(domain);
+        notifyListeners();
       }
-      await _cfService.stopTunnel(tunnel);
-      tunnel.isRunning = false;
-      notifyListeners();
-      return true;
     } catch (e) {
-      _logger.e('Error stopping tunnel: $e');
-      return false;
+      _logger.e('Error stopping forwarding', e);
     }
-  }
-
-  void terminateAllTunnels() {
-    for (var tunnel in _tunnels) {
-      if (tunnel.isLocal && tunnel.isRunning) {
-        _cfService.stopTunnel(tunnel);
-      }
-    }
-  }
-
-  bool isTunnelRunning(Tunnel tunnel) {
-    if (!tunnel.isLocal) return false;
-    return _cfService.isTunnelRunning(tunnel);
   }
 
   @override
   void dispose() {
-    terminateAllTunnels();
-    _dbService.close();
+    // Stop all forwardings
+    for (final entry in _forwardingStatus.entries) {
+      _cfService.stopPortForwarding(entry.value);
+    }
     super.dispose();
   }
 }

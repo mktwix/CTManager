@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 final Logger logger = Logger(
   printer: PrettyPrinter(),
+  level: Level.verbose,
 );
 
 Future<void> initializeApp() async {
@@ -40,6 +41,9 @@ Future<void> initializeApp() async {
 }
 
 void main() async {
+  // Add this before runApp()
+  ErrorWidget.builder = (FlutterErrorDetails details) => Container();
+  
   runZonedGuarded(() async {
     try {
       await initializeApp();

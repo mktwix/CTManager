@@ -5,6 +5,8 @@ import 'dart:convert';
 import '../models/tunnel.dart';
 import 'package:logger/logger.dart';
 import 'package:path/path.dart' as p;
+import 'dart:math';
+import 'package:process/process.dart';
 
 class CloudflaredService {
   final Logger _logger = Logger();
@@ -14,6 +16,102 @@ class CloudflaredService {
   CloudflaredService._internal();
 
   final Map<int, Process> _processes = {};
+
+  // Check if cloudflared is installed
+  Future<bool> isCloudflaredInstalled() async {
+    try {
+      final result = await Process.run('cloudflared', ['--version']);
+      return result.exitCode == 0;
+    } catch (e) {
+      _logger.e('Cloudflared not found: $e');
+      return false;
+    }
+  }
+
+  // Get running tunnel info
+  Future<Map<String, String>?> getRunningTunnelInfo() async {
+    try {
+      final services = await getRunningWindowsServices();
+      if (services.isEmpty) {
+        _logger.i('No cloudflared services found');
+        return null;
+      }
+
+      for (final service in services) {
+        final path = service['path'] ?? '';
+        if (path.isEmpty) continue;
+
+        final tokenMatch = RegExp(r'--token[=\s"'' ]*([^\s''"]+)').firstMatch(path);
+        if (tokenMatch == null) continue;
+
+        final token = tokenMatch.group(1);
+        final tunnelId = await _extractTunnelIdFromToken(token!);
+        
+        if (tunnelId != null) {
+          final tunnels = await listTunnels();
+          final tunnel = tunnels.firstWhere(
+            (t) => t['id'].toString().toLowerCase() == tunnelId.toLowerCase(),
+            orElse: () => <String, String>{},
+          );
+
+          if (tunnel.isNotEmpty) {
+            return {
+              'id': tunnelId,
+              'name': tunnel['name']?.toString() ?? 'Unnamed Tunnel',
+            };
+          }
+        }
+      }
+      return null;
+    } catch (e) {
+      _logger.e('Error getting running tunnel info', e);
+      return null;
+    }
+  }
+
+  // Start port forwarding
+  Future<bool> startPortForwarding(String domain, String port) async {
+    try {
+      // Check if port is available
+      if (!await _checkPortAvailability(int.parse(port))) {
+        _logger.e('Port $port is already in use');
+        return false;
+      }
+
+      // Start the TCP tunnel
+      Process process = await Process.start('cloudflared', [
+        'access',
+        'tcp',
+        '--hostname=$domain',
+        '--url=tcp://localhost:$port',
+      ]);
+
+      process.stdout.transform(utf8.decoder).listen((data) {
+        _logger.i('Cloudflared [$domain]: $data');
+      });
+
+      process.stderr.transform(utf8.decoder).listen((data) {
+        _logger.e('Cloudflared [$domain] Error: $data');
+      });
+
+      _processes[int.parse(port)] = process;
+      _logger.i('Started forwarding for $domain on port $port');
+      return true;
+    } catch (e) {
+      _logger.e('Failed to start port forwarding: $e');
+      return false;
+    }
+  }
+
+  // Stop port forwarding
+  Future<void> stopPortForwarding(String port) async {
+    final process = _processes[int.parse(port)];
+    if (process != null) {
+      process.kill();
+      _processes.remove(int.parse(port));
+      _logger.i('Stopped forwarding on port $port');
+    }
+  }
 
   Future<void> startTunnel(Tunnel tunnel) async {
     if (!tunnel.isLocal) {
@@ -442,6 +540,176 @@ ingress:
     } catch (e) {
       _logger.e('Error checking tunnel connection: $e');
       return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getRunningWindowsServices() async {
+    try {
+      _logger.i('Executing PowerShell command to get services...');
+      final command = [
+        '-Command',
+        r"Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*cloudflared*' }"
+        r" | Select-Object Name,PathName | ConvertTo-Json -Compress"
+      ];
+      
+      _logger.d('Full command: powershell ${command.join(' ')}');
+      
+      final result = await Process.run(
+        'powershell',
+        command,
+        runInShell: true,
+      );
+
+      _logger.i('Command executed. Exit code: ${result.exitCode}');
+      _logger.d('Command stdout: ${result.stdout}');
+      _logger.d('Command stderr: ${result.stderr}');
+
+      if (result.exitCode != 0) {
+        _logger.e('PowerShell command failed with exit code ${result.exitCode}');
+        return [];
+      }
+
+      final output = result.stdout.toString().trim();
+      _logger.i('Raw service output (${output.length} chars): ${output.substring(0, min<int>(200, output.length))}...');
+
+      if (output.isEmpty) {
+        _logger.w('No cloudflared services found in output');
+        return [];
+      }
+
+      try {
+        dynamic decoded = json.decode(output);
+        
+        // Handle both single service (Object) and multiple services (Array)
+        List<dynamic> services = [];
+        if (decoded is List) {
+          services = decoded;
+          _logger.d('Decoded ${services.length} services from JSON array');
+        } else if (decoded is Map) {
+          services = [decoded];
+          _logger.d('Decoded single service from JSON object');
+        } else {
+          _logger.e('Unexpected JSON type: ${decoded.runtimeType}');
+          return [];
+        }
+
+        _logger.i('Successfully parsed ${services.length} cloudflared services');
+        
+        return services.map((s) {
+          final path = s['PathName']?.toString().replaceAll('"', '') ?? '';
+          final name = s['Name']?.toString() ?? 'Unnamed Service';
+          
+          _logger.d('Service details:');
+          _logger.d('  Name: $name');
+          _logger.d('  Path: $path');
+          
+          return {
+            'name': name,
+            'path': path,
+          };
+        }).toList();
+      } catch (e) {
+        _logger.e('JSON parsing failed for output: $output', e);
+        return [];
+      }
+    } catch (e) {
+      _logger.e('Error getting Windows services', e);
+      return [];
+    }
+  }
+
+  Future<List<Map<String, String>>> getRunningTunnelIds() async {
+    _logger.i('## Starting tunnel detection process ##');
+    try {
+      _logger.i('1. Fetching Windows services...');
+      final services = await getRunningWindowsServices();
+      _logger.i('2. Found ${services.length} cloudflared-related services');
+
+      final List<Map<String, String>> tunnelInfo = [];
+      for (final service in services) {
+        _logger.i('3. Processing service: ${service['name']}');
+        final path = service['path'] ?? '';
+        
+        if (path.isEmpty) {
+          _logger.w('4. Skipping service with empty path');
+          continue;
+        }
+
+        _logger.i('5. Service path analysis:');
+        _logger.d('   Full path: "$path"');
+        _logger.d('   Path length: ${path.length} characters');
+
+        _logger.i('6. Token extraction attempt...');
+        final tokenMatch = RegExp(r'--token[=\s"'' ]*([^\s''"]+)').firstMatch(path);
+        
+        if (tokenMatch != null) {
+          final token = tokenMatch.group(1);
+          _logger.i('7. Token found in path');
+          _logger.d('   Raw token: ${token?.substring(0, min<int>(20, token?.length ?? 0))}...');
+          _logger.d('   Token length: ${token?.length ?? 0} characters');
+
+          try {
+            _logger.i('8. Decoding token...');
+            final tunnelId = await _extractTunnelIdFromToken(token!);
+            
+            if (tunnelId != null) {
+              _logger.i('9. Successfully decoded tunnel ID: $tunnelId');
+              _logger.i('10. Fetching Cloudflare tunnel list...');
+              final tunnels = await listTunnels();
+              _logger.i('11. Found ${tunnels.length} Cloudflare tunnels');
+              
+              _logger.d('12. Tunnel IDs from Cloudflare:');
+              tunnels.forEach((t) => _logger.d('   - ${t['id']}'));
+
+              final tunnel = tunnels.firstWhere(
+                (t) => t['id'].toString().toLowerCase() == tunnelId.toLowerCase(),
+                orElse: () => <String, String>{},
+              );
+
+              if (tunnel.isNotEmpty) {
+                _logger.i('13. Matched tunnel: ${tunnel['name']} (${tunnel['id']})');
+                tunnelInfo.add({
+                  'id': tunnelId,
+                  'name': tunnel['name']?.toString() ?? 'Unnamed Tunnel',
+                });
+              } else {
+                _logger.w('14. No Cloudflare tunnel matches ID: $tunnelId');
+                _logger.d('   Available IDs: ${tunnels.map((t) => t['id']).join(', ')}');
+              }
+            } else {
+              _logger.w('9. Failed to decode token');
+            }
+          } catch (e) {
+            _logger.e('15. Token processing failed', e);
+          }
+        } else {
+          _logger.w('7. No token found in service path');
+          _logger.d('   Path snippet: ${path.substring(0, min<int>(100, path.length))}...');
+        }
+      }
+      _logger.i('16. Completed tunnel detection. Found ${tunnelInfo.length} valid tunnels');
+      return tunnelInfo;
+    } catch (e) {
+      _logger.e('!! Tunnel detection process failed !!', e);
+      return [];
+    }
+  }
+
+  Future<String?> _extractTunnelIdFromToken(String token) async {
+    _logger.d('Decoding token: ${token.substring(0, min<int>(8, token.length))}...');
+    try {
+      final cleanedToken = token.trim().replaceAll('"', '');
+      final decodedBytes = base64Url.decode(base64Url.normalize(cleanedToken));
+      final decodedString = utf8.decode(decodedBytes);
+      _logger.v('Decoded token content: $decodedString');
+      
+      final jsonPayload = json.decode(decodedString) as Map<String, dynamic>;
+      final tunnelId = jsonPayload['t']?.toString();
+      _logger.d('Extracted tunnel ID from token: $tunnelId');
+      return tunnelId;
+    } catch (e) {
+      _logger.e('Token decoding failed', e);
+      return null;
     }
   }
 }
