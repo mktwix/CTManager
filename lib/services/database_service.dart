@@ -13,7 +13,7 @@ final Logger _logger = Logger(
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
-  factory DatabaseService() => _instance;
+  static DatabaseService get instance => _instance;
   DatabaseService._internal();
 
   Database? _database;
@@ -155,4 +155,31 @@ class DatabaseService {
       _logger.e('Error closing database: $e');
     }
   }
+
+  Future<List<Tunnel>> getSavedTunnels() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query('tunnels');
+    return List.generate(maps.length, (i) => Tunnel.fromMap(maps[i]));
+  }
+
+  Future<void> initDatabase(Database db, int version) async {
+    await db.execute('''
+      CREATE TABLE tunnels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT NOT NULL,
+        port TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        is_local INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  @override
+  void onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE tunnels ADD COLUMN protocol TEXT NOT NULL DEFAULT "RDP"');
+    }
+  }
+
+  static const _databaseVersion = 2;
 }

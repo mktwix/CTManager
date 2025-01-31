@@ -2,6 +2,9 @@
 
 import 'package:flutter/material.dart';
 import '../models/tunnel.dart';
+import '../providers/tunnel_provider.dart';
+import 'package:provider/provider.dart';
+import '../services/cloudflared_service.dart';
 // Removed unused import
 // import 'package:logger/logger.dart';
 
@@ -90,12 +93,12 @@ class _TunnelFormState extends State<TunnelForm> {
               ),
               DropdownButtonFormField<String>(
                 value: _protocol,
-                items: const ['SSH', 'RDP'].map((protocol) {
-                  return DropdownMenuItem(
-                    value: protocol,
-                    child: Text(protocol),
-                  );
-                }).toList(),
+                items: [
+                  DropdownMenuItem(value: 'rdp', child: Text('Remote Desktop')),
+                  DropdownMenuItem(value: 'ssh', child: Text('SSH')),
+                  DropdownMenuItem(value: 'http', child: Text('HTTP')),
+                  DropdownMenuItem(value: 'https', child: Text('HTTPS')),
+                ],
                 onChanged: (value) {
                   setState(() {
                     _protocol = value!;
@@ -126,7 +129,26 @@ class _TunnelFormState extends State<TunnelForm> {
                 protocol: _protocol,
                 isLocal: widget.isLocal,
               );
-              Navigator.of(context).pop(tunnel);
+              
+              // Save tunnel configuration
+              await context.read<TunnelProvider>().saveTunnel(tunnel);
+              
+              // Start the port forwarding
+              final success = await CloudflaredService()
+                .startPortForwarding(tunnel.domain, tunnel.port);
+                
+              if (context.mounted) {
+                if (success) {
+                  Navigator.of(context).pop();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Failed to start tunnel'),
+                      backgroundColor: Colors.red,
+                    )
+                  );
+                }
+              }
             }
           },
           child: const Text('Save'),

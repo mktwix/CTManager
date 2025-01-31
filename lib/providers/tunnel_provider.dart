@@ -5,6 +5,10 @@ import '../models/tunnel.dart';
 import '../services/database_service.dart';
 import '../services/cloudflared_service.dart';
 import 'package:logger/logger.dart';
+import 'package:process/process.dart';
+import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class TunnelProvider extends ChangeNotifier {
   final CloudflaredService _cfService = CloudflaredService();
@@ -13,10 +17,12 @@ class TunnelProvider extends ChangeNotifier {
   bool _isLoading = true;
   Map<String, String>? _runningTunnel;
   Map<String, String> _forwardingStatus = {};
+  List<Tunnel> _tunnels = [];
 
   bool get isLoading => _isLoading;
   Map<String, String>? get runningTunnel => _runningTunnel;
   Map<String, String> get forwardingStatus => _forwardingStatus;
+  List<Tunnel> get tunnels => _tunnels;
 
   TunnelProvider() {
     _initialize();
@@ -36,6 +42,7 @@ class TunnelProvider extends ChangeNotifier {
 
       // Get running tunnel info
       await checkRunningTunnel();
+      await loadTunnels();
     } catch (e) {
       _logger.e('Error initializing TunnelProvider', e);
     } finally {
@@ -82,6 +89,86 @@ class TunnelProvider extends ChangeNotifier {
       }
     } catch (e) {
       _logger.e('Error stopping forwarding', e);
+    }
+  }
+
+  Future<void> loadTunnels() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tunnelsJson = prefs.getStringList('tunnels') ?? [];
+    _tunnels = tunnelsJson
+        .map((json) => Tunnel.fromJson(jsonDecode(json)))
+        .toList();
+    notifyListeners();
+  }
+
+  Future<void> saveTunnel(Tunnel tunnel) async {
+    final index = _tunnels.indexWhere((t) => t.id == tunnel.id);
+    if (index >= 0) {
+      _tunnels[index] = tunnel;
+    } else {
+      _tunnels.add(tunnel.copyWith(
+        id: DateTime.now().millisecondsSinceEpoch,
+      ));
+    }
+    await _saveToPrefs();
+    notifyListeners();
+  }
+
+  Future<void> _saveToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final tunnelsJson = _tunnels.map((t) => jsonEncode(t.toJson())).toList();
+    await prefs.setStringList('tunnels', tunnelsJson);
+  }
+
+  Future<void> deleteTunnel(int id) async {
+    final db = await DatabaseService.instance.database;
+    await db.delete(
+      'tunnels',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    await loadTunnels();
+  }
+
+  Future<void> launchConnection(Tunnel tunnel) async {
+    try {
+      await Process.run('cmd', ['/c', tunnel.launchCommand], runInShell: true);
+    } catch (e) {
+      _logger.e('Error launching connection: $e');
+    }
+  }
+
+  Future<void> startTunnel(Tunnel tunnel) async {
+    try {
+      await _cfService.startTunnel(tunnel);
+      final updatedTunnel = Tunnel(
+        id: tunnel.id,
+        domain: tunnel.domain,
+        port: tunnel.port,
+        protocol: tunnel.protocol,
+        isRunning: true,
+        isLocal: tunnel.isLocal,
+      );
+      await saveTunnel(updatedTunnel);
+    } catch (e) {
+      _logger.e('Error starting tunnel: $e');
+    }
+  }
+
+  Future<void> stopTunnel(Tunnel tunnel) async {
+    try {
+      await _cfService.stopTunnel(tunnel);
+      final updatedTunnel = Tunnel(
+        id: tunnel.id,
+        domain: tunnel.domain,
+        port: tunnel.port,
+        protocol: tunnel.protocol,
+        isRunning: false,
+        isLocal: tunnel.isLocal,
+      );
+      await saveTunnel(updatedTunnel);
+    } catch (e) {
+      _logger.e('Error stopping tunnel: $e');
     }
   }
 

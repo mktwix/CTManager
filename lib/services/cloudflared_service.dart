@@ -16,6 +16,7 @@ class CloudflaredService {
   CloudflaredService._internal();
 
   final Map<int, Process> _processes = {};
+  final Map<String, Tunnel> _activeTunnels = {};
 
   // Check if cloudflared is installed
   Future<bool> isCloudflaredInstalled() async {
@@ -72,29 +73,62 @@ class CloudflaredService {
   // Start port forwarding
   Future<bool> startPortForwarding(String domain, String port) async {
     try {
-      // Check if port is available
-      if (!await _checkPortAvailability(int.parse(port))) {
+      final portNum = int.parse(port);
+      
+      // Check for existing process
+      if (_processes.containsKey(portNum)) {
+        _logger.w('Port $port already has a running process');
+        return true; // Already running
+      }
+
+      // Check port availability
+      if (!await _checkPortAvailability(portNum)) {
         _logger.e('Port $port is already in use');
         return false;
       }
 
-      // Start the TCP tunnel
-      Process process = await Process.start('cloudflared', [
-        'access',
-        'tcp',
-        '--hostname=$domain',
-        '--url=tcp://localhost:$port',
-      ]);
+      // Start the TCP tunnel with proper path
+      Process process = await Process.start(
+        r'C:\Program Files (x86)\cloudflared\cloudflared.exe',
+        [
+          'access', 
+          'tcp',
+          '--hostname=$domain',
+          '--url=tcp://localhost:$port',
+        ],
+        runInShell: true,
+      );
 
       process.stdout.transform(utf8.decoder).listen((data) {
         _logger.i('Cloudflared [$domain]: $data');
       });
 
       process.stderr.transform(utf8.decoder).listen((data) {
-        _logger.e('Cloudflared [$domain] Error: $data');
+        if (data.contains('INF')) {
+          _logger.i('Cloudflared [$domain] Info: $data');
+        } else if (data.contains('ERR')) {
+          _logger.e('Cloudflared [$domain] Error: $data');
+          _processes.remove(portNum); // Remove from active processes on error
+        } else {
+          _logger.w('Cloudflared [$domain] Warning: $data');
+        }
       });
 
-      _processes[int.parse(port)] = process;
+      // Add to process map and setup exit handler
+      _processes[portNum] = process;
+      process.exitCode.then((code) {
+        _processes.remove(portNum);
+        _logger.i('Cloudflared process for port $port exited with code $code');
+      });
+
+      // Add to active tunnels
+      _activeTunnels[port] = Tunnel(
+        domain: domain,
+        port: port,
+        protocol: 'tcp',
+        isLocal: true,
+      );
+
       _logger.i('Started forwarding for $domain on port $port');
       return true;
     } catch (e) {
@@ -114,86 +148,33 @@ class CloudflaredService {
   }
 
   Future<void> startTunnel(Tunnel tunnel) async {
-    if (!tunnel.isLocal) {
-      _logger.e('Cannot start a remote tunnel');
-      return;
-    }
-
-    if (_processes.containsKey(tunnel.id)) {
-      _logger.w('Tunnel ${tunnel.id} is already running.');
-      return;
-    }
-
     try {
-      // Check if the port is available before starting
-      bool isPortAvailable = await _checkPortAvailability(int.parse(tunnel.port));
-      if (!isPortAvailable) {
-        _logger.e('Port ${tunnel.port} is already in use.');
-        return;
-      }
-
-      // First, run the tunnel service
-      final tunnelId = await _getTunnelIdByDomain(tunnel.domain);
-      if (tunnelId == null) {
-        _logger.e('Could not find tunnel ID for domain: ${tunnel.domain}');
-        return;
-      }
-
-      // Start the tunnel process
-      Process tunnelProcess = await Process.start('cloudflared', [
-        'tunnel',
-        '--config',
-        p.join((await _getConfigDir()).path, '$tunnelId.yml'),
-        'run',
-      ], runInShell: true);
-
-      // Wait a bit for the tunnel to start
-      await Future.delayed(const Duration(seconds: 2));
-
-      // Then start the TCP tunnel
-      Process process = await Process.start('cloudflared', [
-        'access',
-        'tcp',
-        '--hostname=${tunnel.domain}',
-        '--url=tcp://localhost:${tunnel.port}',
-      ]);
-
-      process.stdout.transform(utf8.decoder).listen((data) {
-        _logger.i('Cloudflared [${tunnel.domain}]: $data');
-      });
-
-      process.stderr.transform(utf8.decoder).listen((data) {
-        _logger.e('Cloudflared [${tunnel.domain} Error]: $data');
-      });
-
-      tunnelProcess.stdout.transform(utf8.decoder).listen((data) {
-        _logger.i('Tunnel [${tunnel.domain}]: $data');
-      });
-
-      tunnelProcess.stderr.transform(utf8.decoder).listen((data) {
-        _logger.e('Tunnel [${tunnel.domain} Error]: $data');
-      });
-
-      _processes[tunnel.id!] = process;
-      _logger.i('Started tunnel ${tunnel.domain} on port ${tunnel.port}.');
+      await Process.run(
+        'cloudflared',
+        [
+          'tunnel',
+          '--url',
+          '${tunnel.protocol.toLowerCase()}://localhost:${tunnel.port}',
+          tunnel.domain
+        ],
+        runInShell: true,
+      );
     } catch (e) {
-      _logger.e('Failed to start tunnel ${tunnel.domain}: $e');
+      _logger.e('Error starting tunnel: $e');
+      rethrow;
     }
   }
 
   Future<void> stopTunnel(Tunnel tunnel) async {
-    if (!tunnel.isLocal) {
-      _logger.e('Cannot stop a remote tunnel');
-      return;
-    }
-
-    final process = _processes[tunnel.id!];
-    if (process != null) {
-      process.kill();
-      _processes.remove(tunnel.id!);
-      _logger.i('Stopped tunnel ${tunnel.domain}.');
-    } else {
-      _logger.w('No running tunnel found for ${tunnel.domain}.');
+    try {
+      await Process.run(
+        'cloudflared',
+        ['tunnel', 'delete', '-f', tunnel.domain],
+        runInShell: true,
+      );
+    } catch (e) {
+      _logger.e('Error stopping tunnel: $e');
+      rethrow;
     }
   }
 
@@ -245,6 +226,16 @@ class CloudflaredService {
 
   Future<Map<String, dynamic>> createTunnel(String name) async {
     try {
+      if (name.isEmpty) {
+        return {'success': false, 'error': 'Tunnel name cannot be empty'};
+      }
+      
+      // Add validation for existing tunnels
+      final existingTunnels = await listTunnels();
+      if (existingTunnels.any((t) => t['name'] == name)) {
+        return {'success': false, 'error': 'Tunnel with this name already exists'};
+      }
+
       ProcessResult result = await Process.run('cloudflared', ['tunnel', 'create', name], runInShell: true);
       if (result.exitCode != 0) {
         _logger.e('Failed to create tunnel: ${result.stderr}');
@@ -274,7 +265,7 @@ class CloudflaredService {
       };
     } catch (e) {
       _logger.e('Error creating tunnel: $e');
-      return {'success': false, 'error': e.toString()};
+      return {'success': false, 'error': 'Failed to create tunnel: ${e.toString()}'};
     }
   }
 
@@ -711,5 +702,9 @@ ingress:
       _logger.e('Token decoding failed', e);
       return null;
     }
+  }
+
+  List<Tunnel> getActiveTunnels() {
+    return _activeTunnels.values.toList();
   }
 }

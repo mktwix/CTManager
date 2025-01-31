@@ -11,106 +11,105 @@ import 'package:logger/logger.dart';
 import 'create_tunnel_dialog.dart';
 import 'tunnel_selection_dialog.dart';
 import 'status_dialog.dart';
+import 'tunnel_list_item.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final tunnelProvider = context.watch<TunnelProvider>();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Cloudflare Tunnel Manager'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () => tunnelProvider.checkRunningTunnel(),
+    return Consumer<TunnelProvider>(
+      builder: (context, provider, child) {
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Cloudflare Tunnel Manager'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: () => provider.checkRunningTunnel(),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: tunnelProvider.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : tunnelProvider.runningTunnel == null
-              ? const Center(
-                  child: Text('No running tunnel detected'),
-                )
-              : Column(
-                  children: [
-                    // Running Tunnel Info
-                    Card(
-                      margin: const EdgeInsets.all(16),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Running Tunnel',
-                              style: Theme.of(context).textTheme.titleLarge,
+          body: provider.isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : provider.runningTunnel == null
+                  ? const Center(
+                      child: Text('No running tunnel detected'),
+                    )
+                  : Column(
+                      children: [
+                        // Running Tunnel Info
+                        Card(
+                          margin: const EdgeInsets.all(16),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Running Tunnel',
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                                const SizedBox(height: 8),
+                                Text('Name: ${provider.runningTunnel!['name']}'),
+                                Text('ID: ${provider.runningTunnel!['id']}'),
+                              ],
                             ),
-                            const SizedBox(height: 8),
-                            Text('Name: ${tunnelProvider.runningTunnel!['name']}'),
-                            Text('ID: ${tunnelProvider.runningTunnel!['id']}'),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    // Port Forwarding Section
-                    Expanded(
-                      child: Card(
-                        margin: const EdgeInsets.all(16),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Port Forwarding',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                              const SizedBox(height: 16),
-                              // Active Forwards List
-                              Expanded(
-                                child: tunnelProvider.forwardingStatus.isEmpty
-                                    ? const Center(
-                                        child: Text('No active port forwards'),
-                                      )
-                                    : ListView.builder(
-                                        itemCount: tunnelProvider
-                                            .forwardingStatus.length,
-                                        itemBuilder: (context, index) {
-                                          final domain = tunnelProvider
-                                              .forwardingStatus.keys
-                                              .elementAt(index);
-                                          final port = tunnelProvider
-                                              .forwardingStatus[domain]!;
-                                          return ListTile(
-                                            title: Text(domain),
-                                            subtitle: Text('Port: $port'),
-                                            trailing: IconButton(
-                                              icon: const Icon(Icons.stop),
-                                              onPressed: () => tunnelProvider
-                                                  .stopForwarding(domain),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                              ),
-                            ],
                           ),
                         ),
-                      ),
+
+                        // Port Forwarding Section
+                        Expanded(
+                          child: Card(
+                            margin: const EdgeInsets.all(16),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Port Forwarding',
+                                    style: Theme.of(context).textTheme.titleLarge,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  // Active Forwards List
+                                  Expanded(
+                                    child: provider.tunnels.isEmpty
+                                        ? const Center(
+                                            child: Text('No saved tunnels'),
+                                          )
+                                        : ListView.builder(
+                                            itemCount: provider.tunnels.length,
+                                            itemBuilder: (context, index) {
+                                              final tunnel = provider.tunnels[index];
+                                              return TunnelListItem(
+                                                tunnel: tunnel,
+                                                onToggle: (isRunning) async {
+                                                  if (isRunning) {
+                                                    await provider.startTunnel(tunnel);
+                                                  } else {
+                                                    await provider.stopTunnel(tunnel);
+                                                  }
+                                                },
+                                              );
+                                            },
+                                          ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-      floatingActionButton: tunnelProvider.runningTunnel != null
-          ? FloatingActionButton(
-              onPressed: () => _showAddForwardDialog(context),
-              child: const Icon(Icons.add),
-            )
-          : null,
+          floatingActionButton: provider.runningTunnel != null
+              ? FloatingActionButton(
+                  onPressed: () => _showAddForwardDialog(context),
+                  child: const Icon(Icons.add),
+                )
+              : null,
+        );
+      },
     );
   }
 
@@ -189,6 +188,16 @@ class HomePage extends StatelessWidget {
             child: const Text('Add'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showEditDialog(BuildContext context, Tunnel tunnel) {
+    showDialog(
+      context: context,
+      builder: (context) => TunnelForm(
+        tunnel: tunnel,
+        isLocal: tunnel.isLocal,
       ),
     );
   }

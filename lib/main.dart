@@ -12,6 +12,8 @@ import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:process/process.dart';
+import 'services/database_service.dart';
 
 final Logger logger = Logger(
   printer: PrettyPrinter(),
@@ -34,6 +36,8 @@ Future<void> initializeApp() async {
       FlutterError.dumpErrorToConsole(details);
       logger.e('Flutter Error: ${details.exception}', details.exception, details.stack);
     };
+
+    await DatabaseService.instance.init();
   } catch (e, stackTrace) {
     logger.e('Error during initialization', e, stackTrace);
     rethrow;
