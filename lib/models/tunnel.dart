@@ -19,9 +19,9 @@ class Tunnel {
 
   String get launchCommand {
     if (protocol == 'RDP') {
-      return 'mstsc /v:$domain:$port';
+      return 'mstsc /v:localhost:$port';
     } else if (protocol == 'SSH') {
-      return 'ssh $domain -p $port';
+      return 'ssh localhost -p $port';
     }
     return '';
   }
@@ -33,6 +33,7 @@ class Tunnel {
       'port': port,
       'protocol': protocol,
       'is_local': isLocal ? 1 : 0,
+      'is_running': isRunning ? 1 : 0,
     };
   }
 
@@ -43,6 +44,7 @@ class Tunnel {
       port: map['port'],
       protocol: map['protocol'],
       isLocal: map['is_local'] == 1,
+      isRunning: map['is_running'] == 1,
     );
   }
 
@@ -51,8 +53,8 @@ class Tunnel {
         domain: json['domain'] as String,
         port: json['port'] as String,
         protocol: json['protocol'] as String,
-        isLocal: json['isLocal'] as bool? ?? false,
-        isRunning: json['isRunning'] as bool? ?? false,
+        isLocal: json['is_local'] == 1 || json['isLocal'] == true,
+        isRunning: json['is_running'] == 1 || json['isRunning'] == true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -60,8 +62,8 @@ class Tunnel {
         'domain': domain,
         'port': port,
         'protocol': protocol,
-        'isLocal': isLocal,
-        'isRunning': isRunning,
+        'is_local': isLocal ? 1 : 0,
+        'is_running': isRunning ? 1 : 0,
       };
 
   Tunnel copyWith({

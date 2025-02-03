@@ -12,6 +12,13 @@ import 'create_tunnel_dialog.dart';
 import 'tunnel_selection_dialog.dart';
 import 'status_dialog.dart';
 import 'tunnel_list_item.dart';
+import 'logs_page.dart';
+import '../services/log_service.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+
+const cloudflareOrange = Color(0xFFF48120);
+const cloudflareBlue = Color(0xFF404242);
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -21,9 +28,15 @@ class HomePage extends StatelessWidget {
     return Consumer<TunnelProvider>(
       builder: (context, provider, child) {
         return Scaffold(
+          backgroundColor: Colors.grey[100],
           appBar: AppBar(
+            backgroundColor: cloudflareOrange,
             title: const Text('Cloudflare Tunnel Manager'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: () => _showAddForwardDialog(context),
+              ),
               IconButton(
                 icon: const Icon(Icons.refresh),
                 onPressed: () => provider.checkRunningTunnel(),
@@ -41,20 +54,10 @@ class HomePage extends StatelessWidget {
                         // Running Tunnel Info
                         Card(
                           margin: const EdgeInsets.all(16),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Running Tunnel',
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 8),
-                                Text('Name: ${provider.runningTunnel!['name']}'),
-                                Text('ID: ${provider.runningTunnel!['id']}'),
-                              ],
-                            ),
+                          child: ListTile(
+                            leading: const Icon(Icons.cloud_done, color: cloudflareOrange),
+                            title: Text('Running Tunnel: ${provider.runningTunnel!['name']}'),
+                            subtitle: Text('ID: ${provider.runningTunnel!['id']}'),
                           ),
                         ),
 
@@ -67,9 +70,40 @@ class HomePage extends StatelessWidget {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    'Port Forwarding',
-                                    style: Theme.of(context).textTheme.titleLarge,
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Port Forwarding',
+                                        style: Theme.of(context).textTheme.titleLarge,
+                                      ),
+                                      Row(
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.play_arrow),
+                                            onPressed: () {
+                                              for (var tunnel in provider.tunnels) {
+                                                if (!tunnel.isRunning) {
+                                                  provider.startForwarding(tunnel.domain, tunnel.port);
+                                                }
+                                              }
+                                            },
+                                            tooltip: 'Start All',
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.stop),
+                                            onPressed: () {
+                                              for (var tunnel in provider.tunnels) {
+                                                if (tunnel.isRunning) {
+                                                  provider.stopForwarding(tunnel.domain);
+                                                }
+                                              }
+                                            },
+                                            tooltip: 'Stop All',
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(height: 16),
                                   // Active Forwards List
@@ -84,13 +118,6 @@ class HomePage extends StatelessWidget {
                                               final tunnel = provider.tunnels[index];
                                               return TunnelListItem(
                                                 tunnel: tunnel,
-                                                onToggle: (isRunning) async {
-                                                  if (isRunning) {
-                                                    await provider.startTunnel(tunnel);
-                                                  } else {
-                                                    await provider.stopTunnel(tunnel);
-                                                  }
-                                                },
                                               );
                                             },
                                           ),
@@ -100,14 +127,75 @@ class HomePage extends StatelessWidget {
                             ),
                           ),
                         ),
+
+                        // Logs Section
+                        Container(
+                          height: 200,
+                          margin: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    const Text('Logs', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    Row(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.copy_outlined, size: 20),
+                                          onPressed: () {
+                                            final logs = LogService().logs.join('\n');
+                                            if (logs.isNotEmpty) {
+                                              Clipboard.setData(ClipboardData(text: logs));
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text('Logs copied to clipboard')),
+                                              );
+                                            }
+                                          },
+                                          tooltip: 'Copy all logs',
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, size: 20),
+                                          onPressed: () => LogService().clearLogs(),
+                                          tooltip: 'Clear logs',
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Expanded(
+                                child: AnimatedBuilder(
+                                  animation: LogService(),
+                                  builder: (context, _) {
+                                    final logs = LogService().logs;
+                                    return SingleChildScrollView(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: SelectableText(
+                                          logs.reversed.join('\n'),
+                                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
-          floatingActionButton: provider.runningTunnel != null
-              ? FloatingActionButton(
-                  onPressed: () => _showAddForwardDialog(context),
-                  child: const Icon(Icons.add),
-                )
-              : null,
         );
       },
     );
@@ -117,6 +205,7 @@ class HomePage extends StatelessWidget {
     final formKey = GlobalKey<FormState>();
     String domain = '';
     String port = '';
+    String protocol = '';
 
     showDialog(
       context: context,
@@ -158,6 +247,30 @@ class HomePage extends StatelessWidget {
                 },
                 onSaved: (value) => port = value!,
               ),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                  labelText: 'Protocol',
+                ),
+                value: protocol.isEmpty ? 'RDP' : protocol,
+                items: const [
+                  DropdownMenuItem(value: 'RDP', child: Text('Remote Desktop')),
+                  DropdownMenuItem(value: 'SSH', child: Text('SSH')),
+                ],
+                onChanged: (value) {
+                  protocol = value!;
+                  // Update port to default value based on protocol
+                  if (port.isEmpty || port == '3389' || port == '22') {
+                    port = value == 'RDP' ? '3389' : '22';
+                  }
+                },
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please select a protocol';
+                  }
+                  return null;
+                },
+                onSaved: (value) => protocol = value!,
+              ),
             ],
           ),
         ),
@@ -170,16 +283,19 @@ class HomePage extends StatelessWidget {
             onPressed: () async {
               if (formKey.currentState!.validate()) {
                 formKey.currentState!.save();
-                final success = await context
-                    .read<TunnelProvider>()
-                    .startForwarding(domain, port);
+                final tunnel = Tunnel(
+                  domain: domain,
+                  port: port,
+                  protocol: protocol,
+                );
+                
+                await context.read<TunnelProvider>().saveTunnel(tunnel);
+                
                 if (context.mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(success
-                          ? 'Port forwarding started'
-                          : 'Failed to start port forwarding'),
+                      content: Text('Tunnel added successfully'),
                     ),
                   );
                 }

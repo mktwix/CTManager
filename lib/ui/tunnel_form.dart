@@ -94,17 +94,15 @@ class _TunnelFormState extends State<TunnelForm> {
               DropdownButtonFormField<String>(
                 value: _protocol,
                 items: [
-                  DropdownMenuItem(value: 'rdp', child: Text('Remote Desktop')),
-                  DropdownMenuItem(value: 'ssh', child: Text('SSH')),
-                  DropdownMenuItem(value: 'http', child: Text('HTTP')),
-                  DropdownMenuItem(value: 'https', child: Text('HTTPS')),
+                  DropdownMenuItem(value: 'RDP', child: Text('Remote Desktop')),
+                  DropdownMenuItem(value: 'SSH', child: Text('SSH')),
                 ],
                 onChanged: (value) {
                   setState(() {
                     _protocol = value!;
                     // Update port if it's still at default value
                     if (_portController.text == '4000' || _portController.text == '4001') {
-                      _portController.text = value == 'RDP' ? '4000' : '4001';
+                      _portController.text = value == 'RDP' ? '3389' : '22';
                     }
                   });
                 },
@@ -132,22 +130,9 @@ class _TunnelFormState extends State<TunnelForm> {
               
               // Save tunnel configuration
               await context.read<TunnelProvider>().saveTunnel(tunnel);
-              
-              // Start the port forwarding
-              final success = await CloudflaredService()
-                .startPortForwarding(tunnel.domain, tunnel.port);
                 
               if (context.mounted) {
-                if (success) {
-                  Navigator.of(context).pop();
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Failed to start tunnel'),
-                      backgroundColor: Colors.red,
-                    )
-                  );
-                }
+                Navigator.of(context).pop();
               }
             }
           },

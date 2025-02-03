@@ -14,6 +14,8 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:process/process.dart';
 import 'services/database_service.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 final Logger logger = Logger(
   printer: PrettyPrinter(),
@@ -21,26 +23,114 @@ final Logger logger = Logger(
 );
 
 Future<void> initializeApp() async {
-  try {
-    // Initialize Flutter bindings
-    WidgetsFlutterBinding.ensureInitialized();
+  int retryCount = 0;
+  const maxRetries = 3;
+  
+  while (retryCount < maxRetries) {
+    try {
+      // Initialize Flutter bindings
+      WidgetsFlutterBinding.ensureInitialized();
 
-    // Initialize sqflite for desktop
-    if (Platform.isWindows || Platform.isLinux) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
+      // Initialize sqflite for desktop
+      if (Platform.isWindows || Platform.isLinux) {
+        sqfliteFfiInit();
+        databaseFactory = databaseFactoryFfi;
+      }
+
+      // Set up error handling
+      FlutterError.onError = (FlutterErrorDetails details) {
+        FlutterError.dumpErrorToConsole(details);
+        logger.e('Flutter Error: ${details.exception}', details.exception, details.stack);
+      };
+
+      await DatabaseService.instance.init();
+      return; // Success, exit the retry loop
+    } catch (e, stackTrace) {
+      retryCount++;
+      logger.e('Error during initialization (attempt $retryCount/$maxRetries)', e, stackTrace);
+      
+      if (retryCount >= maxRetries) {
+        rethrow;
+      }
+      
+      // Wait before retrying
+      await Future.delayed(Duration(seconds: 2 * retryCount));
     }
+  }
+}
 
-    // Set up error handling
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.dumpErrorToConsole(details);
-      logger.e('Flutter Error: ${details.exception}', details.exception, details.stack);
-    };
+class ErrorScreen extends StatelessWidget {
+  final String errorMessage;
+  final Object? error;
+  final StackTrace? stackTrace;
 
-    await DatabaseService.instance.init();
-  } catch (e, stackTrace) {
-    logger.e('Error during initialization', e, stackTrace);
-    rethrow;
+  const ErrorScreen({
+    required this.errorMessage,
+    this.error,
+    this.stackTrace,
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                const SizedBox(height: 16),
+                const Text(
+                  'Error Starting Application',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  errorMessage,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Error Details:\n${error.toString()}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton(
+                      onPressed: () {
+                        exit(1); // This will restart the app
+                      },
+                      child: const Text('Restart Application'),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(
+                          text: 'Error: $errorMessage\n\nDetails: $error\n\nStack Trace:\n$stackTrace',
+                        ));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Error details copied to clipboard')),
+                        );
+                      },
+                      child: const Text('Copy Error Details'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -53,49 +143,59 @@ void main() async {
       await initializeApp();
       
       runApp(
-        ChangeNotifierProvider(
-          create: (_) => TunnelProvider(),
-          child: const CloudflaredManagerApp(),
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => TunnelProvider()),
+          ],
+          child: MaterialApp(
+            title: 'CT Manager',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              primaryColor: const Color(0xFFF48120), // Cloudflare Orange
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: const Color(0xFFF48120),
+                primary: const Color(0xFFF48120),
+                secondary: const Color(0xFF404242), // Cloudflare Dark Gray
+                background: const Color(0xFFF7F7F7), // Light Gray Background
+              ),
+              appBarTheme: const AppBarTheme(
+                backgroundColor: Color(0xFFF48120),
+                foregroundColor: Colors.white,
+                elevation: 0,
+              ),
+              floatingActionButtonTheme: const FloatingActionButtonThemeData(
+                backgroundColor: Color(0xFFF48120),
+                foregroundColor: Colors.white,
+              ),
+              elevatedButtonTheme: ElevatedButtonThemeData(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF48120),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+            home: const HomePage(),
+          ),
         ),
       );
     } catch (e, stackTrace) {
       logger.e('Fatal error during app startup', e, stackTrace);
-      runApp(MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 48),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Error Starting Application',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    e.toString(),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      exit(1); // This will restart the app
-                    },
-                    child: const Text('Restart Application'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+      runApp(ErrorScreen(
+        errorMessage: 'Failed to start the application',
+        error: e,
+        stackTrace: stackTrace,
       ));
     }
   }, (error, stack) {
     logger.e('Uncaught error', error, stack);
+    // Show error screen if the app is already running
+    if (WidgetsBinding.instance.renderViewElement != null) {
+      runApp(ErrorScreen(
+        errorMessage: 'An unexpected error occurred',
+        error: error,
+        stackTrace: stack,
+      ));
+    }
   });
 }
 

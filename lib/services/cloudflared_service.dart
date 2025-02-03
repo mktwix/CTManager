@@ -7,6 +7,8 @@ import 'package:logger/logger.dart';
 import 'package:path/path.dart' as p;
 import 'dart:math';
 import 'package:process/process.dart';
+import 'dart:async';
+import '../services/log_service.dart';
 
 class CloudflaredService {
   final Logger _logger = Logger();
@@ -17,6 +19,7 @@ class CloudflaredService {
 
   final Map<int, Process> _processes = {};
   final Map<String, Tunnel> _activeTunnels = {};
+  final Map<int, int> _cloudflaredPids = {};
 
   // Check if cloudflared is installed
   Future<bool> isCloudflaredInstalled() async {
@@ -74,76 +77,190 @@ class CloudflaredService {
   Future<bool> startPortForwarding(String domain, String port) async {
     try {
       final portNum = int.parse(port);
+      LogService().addLog('Starting port forwarding process...');
+      LogService().addLog('Domain: $domain, Port: $port');
+      
+      // Check if port is available
+      if (!await checkPortAvailability(portNum)) {
+        LogService().addLog('ERROR: Port $port is already in use');
+        return false;
+      }
       
       // Check for existing process
       if (_processes.containsKey(portNum)) {
-        _logger.w('Port $port already has a running process');
+        LogService().addLog('Port $port already has a running process');
         return true; // Already running
       }
 
-      // Check port availability
-      if (!await _checkPortAvailability(portNum)) {
-        _logger.e('Port $port is already in use');
+      // Get cloudflared path
+      final cloudflaredPath = await _getCloudflaredPath();
+      if (cloudflaredPath == null) {
+        LogService().addLog('ERROR: Could not find cloudflared executable');
+        _logger.e('Could not find cloudflared executable');
+        return false;
+      }
+      LogService().addLog('Found cloudflared at: $cloudflaredPath');
+
+      _logger.i('Starting cloudflared on port $port for domain $domain');
+      LogService().addLog('Executing cloudflared command...');
+      
+      // Create a VBS script to hide the window completely
+      final vbsFile = await _createVbsFile(cloudflaredPath, domain, port);
+      if (vbsFile == null) {
+        LogService().addLog('ERROR: Failed to create VBS script');
         return false;
       }
 
-      // Start the TCP tunnel with proper path
-      Process process = await Process.start(
-        r'C:\Program Files (x86)\cloudflared\cloudflared.exe',
-        [
-          'access', 
-          'tcp',
-          '--hostname=$domain',
-          '--url=tcp://localhost:$port',
-        ],
-        runInShell: true,
+      // Start the process with the VBS script
+      final process = await Process.start(
+        'wscript.exe',
+        [vbsFile.path],
+        mode: ProcessStartMode.detached,
       );
 
-      process.stdout.transform(utf8.decoder).listen((data) {
-        _logger.i('Cloudflared [$domain]: $data');
-      });
-
-      process.stderr.transform(utf8.decoder).listen((data) {
-        if (data.contains('INF')) {
-          _logger.i('Cloudflared [$domain] Info: $data');
-        } else if (data.contains('ERR')) {
-          _logger.e('Cloudflared [$domain] Error: $data');
-          _processes.remove(portNum); // Remove from active processes on error
-        } else {
-          _logger.w('Cloudflared [$domain] Warning: $data');
+      // Wait briefly for the cloudflared process to start
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Find the actual cloudflared process
+      final result = await Process.run(
+        'powershell',
+        [
+          '-Command',
+          'Get-Process cloudflared | Where-Object {\$_.CommandLine -like "*$port*"} | Select-Object -ExpandProperty Id'
+        ],
+        runInShell: true
+      );
+      
+      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        final cloudflaredPid = int.tryParse(result.stdout.toString().trim());
+        if (cloudflaredPid != null) {
+          LogService().addLog('Cloudflared process started with PID: $cloudflaredPid');
+          // Create a dummy process with the correct PID for tracking
+          final dummyProcess = await Process.start('cmd', ['/c', 'echo dummy']);
+          _processes[portNum] = dummyProcess;
+          // Store the real PID separately
+          _cloudflaredPids[portNum] = cloudflaredPid;
         }
-      });
-
-      // Add to process map and setup exit handler
-      _processes[portNum] = process;
-      process.exitCode.then((code) {
-        _processes.remove(portNum);
-        _logger.i('Cloudflared process for port $port exited with code $code');
-      });
-
+      }
+      
       // Add to active tunnels
-      _activeTunnels[port] = Tunnel(
+      _activeTunnels[domain] = Tunnel(
         domain: domain,
         port: port,
         protocol: 'tcp',
-        isLocal: true,
+        isRunning: true
       );
 
-      _logger.i('Started forwarding for $domain on port $port');
-      return true;
-    } catch (e) {
-      _logger.e('Failed to start port forwarding: $e');
+      // Wait a bit to ensure the process started
+      await Future.delayed(const Duration(seconds: 2));
+      
+      // Check if the port is now in use (indicating the tunnel is running)
+      if (!await checkPortAvailability(portNum)) {
+        LogService().addLog('Tunnel appears to be running (port is in use)');
+        return true;
+      } else {
+        LogService().addLog('ERROR: Tunnel does not appear to be running (port is still available)');
+        await stopPortForwarding(port);
+        return false;
+      }
+
+    } catch (e, stack) {
+      LogService().addLog('ERROR: Failed to start port forwarding: $e');
+      _logger.e('Failed to start port forwarding', e, stack);
       return false;
+    }
+  }
+
+  Future<File?> _createVbsFile(String cloudflaredPath, String domain, String port) async {
+    try {
+      final tempDir = await Directory.systemTemp.createTemp('cloudflared_');
+      final vbsFile = File('${tempDir.path}\\run_cloudflared.vbs');
+      
+      // Create VBS script that runs the command completely hidden
+      await vbsFile.writeAsString('''
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://localhost:$port", 0, False
+''');
+      
+      return vbsFile;
+    } catch (e) {
+      _logger.e('Error creating VBS file: $e');
+      return null;
+    }
+  }
+
+  void _cleanupProcess(int port) {
+    final process = _processes[port];
+    if (process != null) {
+      try {
+        process.kill(ProcessSignal.sigterm);
+      } catch (e) {
+        _logger.e('Error killing process: $e');
+      }
+      _processes.remove(port);
+    }
+  }
+
+  Future<String?> _getCloudflaredPath() async {
+    try {
+      // Check common installation paths
+      final possiblePaths = [
+        r'C:\Program Files\cloudflared\cloudflared.exe',
+        r'C:\Program Files (x86)\cloudflared\cloudflared.exe',
+        'cloudflared',  // If in PATH
+      ];
+
+      for (final path in possiblePaths) {
+        try {
+          final result = await Process.run(path, ['--version']);
+          if (result.exitCode == 0) {
+            return path;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+      
+      return null;
+    } catch (e) {
+      _logger.e('Error finding cloudflared path: $e');
+      return null;
     }
   }
 
   // Stop port forwarding
   Future<void> stopPortForwarding(String port) async {
-    final process = _processes[int.parse(port)];
-    if (process != null) {
-      process.kill();
-      _processes.remove(int.parse(port));
-      _logger.i('Stopped forwarding on port $port');
+    try {
+      final portNum = int.parse(port);
+      final cloudflaredPid = _cloudflaredPids[portNum];
+      if (cloudflaredPid != null) {
+        LogService().addLog('Attempting to kill cloudflared process with PID: $cloudflaredPid');
+        
+        // Kill all cloudflared processes using this port
+        final result = await Process.run(
+          'powershell',
+          [
+            '-Command',
+            'Stop-Process -Id $cloudflaredPid -Force -ErrorAction SilentlyContinue'
+          ],
+          runInShell: true
+        );
+
+        if (result.exitCode == 0) {
+          LogService().addLog('Successfully killed cloudflared process');
+        } else {
+          LogService().addLog('Error killing process: ${result.stderr}');
+        }
+        
+        _processes.remove(portNum);
+        _cloudflaredPids.remove(portNum);
+        _logger.i('Stopped forwarding on port $port');
+        
+        // Remove from active tunnels
+        _activeTunnels.removeWhere((domain, tunnel) => tunnel.port == port);
+      }
+    } catch (e) {
+      _logger.e('Error stopping port forwarding: $e');
     }
   }
 
@@ -180,8 +297,10 @@ class CloudflaredService {
 
   bool isTunnelRunning(Tunnel tunnel) {
     if (!tunnel.isLocal) return false;
-    // Check both specific process and general running state
-    return _processes.isNotEmpty;
+    // Check if there's a process running for this specific port
+    final portNum = int.tryParse(tunnel.port);
+    if (portNum == null) return false;
+    return _processes.containsKey(portNum);
   }
 
   Future<bool> _checkPortAvailability(int port) async {

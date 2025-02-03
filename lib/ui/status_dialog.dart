@@ -3,10 +3,15 @@ import 'package:provider/provider.dart';
 import '../providers/tunnel_provider.dart';
 import 'package:logger/logger.dart';
 
-class StatusDialog extends StatelessWidget {
-  final Logger _logger = Logger();
+class StatusDialog extends StatefulWidget {
+  const StatusDialog({super.key});
 
-  StatusDialog({super.key});
+  @override
+  State<StatusDialog> createState() => _StatusDialogState();
+}
+
+class _StatusDialogState extends State<StatusDialog> {
+  final Logger _logger = Logger();
 
   @override
   Widget build(BuildContext context) {
@@ -50,8 +55,11 @@ class StatusDialog extends StatelessWidget {
           child: const Text('Close'),
         ),
         TextButton(
-          onPressed: () {
-            tunnelProvider.checkRunningTunnel();
+          onPressed: () async {
+            await tunnelProvider.checkRunningTunnel();
+            if (context.mounted) {
+              setState(() {});
+            }
             _logger.i('Refreshing tunnel status...');
           },
           child: const Text('Refresh'),

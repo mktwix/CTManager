@@ -53,8 +53,9 @@ class DatabaseService {
           _database = await databaseFactory.openDatabase(
             dbPath,
             options: OpenDatabaseOptions(
-              version: 1,
+              version: 2,
               onCreate: _onCreate,
+              onUpgrade: _onUpgrade,
             ),
           );
           _logger.i('Database initialized at $dbPath');
@@ -90,10 +91,11 @@ class DatabaseService {
         domain TEXT NOT NULL,
         port TEXT NOT NULL,
         protocol TEXT NOT NULL,
-        is_local INTEGER NOT NULL DEFAULT 0
+        is_local INTEGER NOT NULL DEFAULT 0,
+        is_running INTEGER NOT NULL DEFAULT 0
       )
     ''');
-    _logger.i('Tunnels table created');
+    _logger.i('Tunnels table created with version $version');
   }
 
   Future<int> insertTunnel(Tunnel tunnel) async {
@@ -169,15 +171,51 @@ class DatabaseService {
         domain TEXT NOT NULL,
         port TEXT NOT NULL,
         protocol TEXT NOT NULL,
-        is_local INTEGER NOT NULL DEFAULT 0
+        is_local INTEGER NOT NULL DEFAULT 0,
+        is_running INTEGER NOT NULL DEFAULT 0
       )
     ''');
   }
 
-  @override
-  void onUpgrade(Database db, int oldVersion, int newVersion) async {
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    _logger.i('Upgrading database from version $oldVersion to $newVersion');
+    
     if (oldVersion < 2) {
-      await db.execute('ALTER TABLE tunnels ADD COLUMN protocol TEXT NOT NULL DEFAULT "RDP"');
+      // Add is_running column if upgrading from version 1
+      try {
+        await db.execute('ALTER TABLE tunnels ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0');
+        _logger.i('Added is_running column to tunnels table');
+      } catch (e) {
+        _logger.e('Error adding is_running column: $e');
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> resetDatabase() async {
+    try {
+      _logger.i('Resetting database...');
+      
+      // Close existing connection
+      await close();
+      
+      // Get database path
+      final Directory appDir = await getApplicationSupportDirectory();
+      final String dbPath = p.join(appDir.path, 'ctmanager.db');
+      
+      // Delete the database file
+      final dbFile = File(dbPath);
+      if (await dbFile.exists()) {
+        await dbFile.delete();
+        _logger.i('Database file deleted');
+      }
+      
+      // Reinitialize the database
+      await init();
+      _logger.i('Database reset complete');
+    } catch (e) {
+      _logger.e('Error resetting database: $e');
+      rethrow;
     }
   }
 
