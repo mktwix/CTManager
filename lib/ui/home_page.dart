@@ -34,10 +34,6 @@ class HomePage extends StatelessWidget {
             title: const Text('Cloudflare Tunnel Manager'),
             actions: [
               IconButton(
-                icon: const Icon(Icons.add),
-                onPressed: () => _showAddForwardDialog(context),
-              ),
-              IconButton(
                 icon: const Icon(Icons.refresh),
                 onPressed: () => provider.checkRunningTunnel(),
               ),
@@ -54,10 +50,47 @@ class HomePage extends StatelessWidget {
                         // Running Tunnel Info
                         Card(
                           margin: const EdgeInsets.all(16),
-                          child: ListTile(
-                            leading: const Icon(Icons.cloud_done, color: cloudflareOrange),
-                            title: Text('Running Tunnel: ${provider.runningTunnel!['name']}'),
-                            subtitle: Text('ID: ${provider.runningTunnel!['id']}'),
+                          child: Container(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Icon(
+                                    Icons.cloud_done_rounded,
+                                    color: Theme.of(context).primaryColor,
+                                    size: 24,
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        provider.runningTunnel!['name'] ?? 'Unnamed Tunnel',
+                                        style: const TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'ID: ${provider.runningTunnel!['id']}',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
 
@@ -80,26 +113,49 @@ class HomePage extends StatelessWidget {
                                       Row(
                                         children: [
                                           IconButton(
-                                            icon: const Icon(Icons.play_arrow),
-                                            onPressed: () {
-                                              for (var tunnel in provider.tunnels) {
-                                                if (!tunnel.isRunning) {
-                                                  provider.startForwarding(tunnel.domain, tunnel.port);
-                                                }
-                                              }
-                                            },
-                                            tooltip: 'Start All',
+                                            icon: Icon(Icons.add_circle_outline, 
+                                              color: Theme.of(context).primaryColor,
+                                              size: 28,
+                                            ),
+                                            onPressed: () => _showAddForwardDialog(context),
+                                            tooltip: 'Add Port Forward',
                                           ),
-                                          IconButton(
-                                            icon: const Icon(Icons.stop),
-                                            onPressed: () {
-                                              for (var tunnel in provider.tunnels) {
-                                                if (tunnel.isRunning) {
-                                                  provider.stopForwarding(tunnel.domain);
-                                                }
-                                              }
-                                            },
-                                            tooltip: 'Stop All',
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[100],
+                                              borderRadius: BorderRadius.circular(20),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                IconButton(
+                                                  icon: Icon(Icons.play_arrow_rounded,
+                                                    color: Colors.grey[700],
+                                                  ),
+                                                  onPressed: () {
+                                                    for (var tunnel in provider.tunnels) {
+                                                      if (!tunnel.isRunning) {
+                                                        provider.startForwarding(tunnel.domain, tunnel.port);
+                                                      }
+                                                    }
+                                                  },
+                                                  tooltip: 'Start All',
+                                                ),
+                                                IconButton(
+                                                  icon: Icon(Icons.stop_rounded,
+                                                    color: Colors.grey[700],
+                                                  ),
+                                                  onPressed: () {
+                                                    for (var tunnel in provider.tunnels) {
+                                                      if (tunnel.isRunning) {
+                                                        provider.stopForwarding(tunnel.domain);
+                                                      }
+                                                    }
+                                                  },
+                                                  tooltip: 'Stop All',
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ],
                                       ),
@@ -109,8 +165,24 @@ class HomePage extends StatelessWidget {
                                   // Active Forwards List
                                   Expanded(
                                     child: provider.tunnels.isEmpty
-                                        ? const Center(
-                                            child: Text('No saved tunnels'),
+                                        ? Center(
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(Icons.cloud_off_outlined, 
+                                                  size: 48, 
+                                                  color: Colors.grey[400],
+                                                ),
+                                                const SizedBox(height: 16),
+                                                Text(
+                                                  'No saved tunnels',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
+                                                    fontSize: 16,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           )
                                         : ListView.builder(
                                             itemCount: provider.tunnels.length,
@@ -133,26 +205,47 @@ class HomePage extends StatelessWidget {
                           height: 200,
                           margin: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey),
-                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white,
+                            border: Border.all(color: Colors.grey[200]!),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Container(
-                                padding: const EdgeInsets.all(8),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                                 decoration: BoxDecoration(
-                                  color: Theme.of(context).primaryColor.withOpacity(0.1),
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                                  color: Colors.grey[50],
+                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                                 ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    const Text('Logs', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.terminal_rounded,
+                                          size: 20,
+                                          color: Colors.grey[700],
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Logs',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.grey[800],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                     Row(
                                       children: [
                                         IconButton(
-                                          icon: const Icon(Icons.copy_outlined, size: 20),
+                                          icon: Icon(
+                                            Icons.copy_outlined,
+                                            size: 20,
+                                            color: Colors.grey[700],
+                                          ),
                                           onPressed: () {
                                             final logs = LogService().logs.join('\n');
                                             if (logs.isNotEmpty) {
@@ -165,7 +258,11 @@ class HomePage extends StatelessWidget {
                                           tooltip: 'Copy all logs',
                                         ),
                                         IconButton(
-                                          icon: const Icon(Icons.delete_outline, size: 20),
+                                          icon: Icon(
+                                            Icons.delete_outline_rounded,
+                                            size: 20,
+                                            color: Colors.grey[700],
+                                          ),
                                           onPressed: () => LogService().clearLogs(),
                                           tooltip: 'Clear logs',
                                         ),
@@ -179,12 +276,21 @@ class HomePage extends StatelessWidget {
                                   animation: LogService(),
                                   builder: (context, _) {
                                     final logs = LogService().logs;
-                                    return SingleChildScrollView(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8.0),
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[50],
+                                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                                      ),
+                                      child: SingleChildScrollView(
+                                        padding: const EdgeInsets.all(16),
                                         child: SelectableText(
                                           logs.reversed.join('\n'),
-                                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                                          style: TextStyle(
+                                            fontFamily: 'monospace',
+                                            fontSize: 12,
+                                            color: Colors.grey[800],
+                                            height: 1.5,
+                                          ),
                                         ),
                                       ),
                                     );

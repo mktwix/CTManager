@@ -155,22 +155,54 @@ void main() async {
               colorScheme: ColorScheme.fromSeed(
                 seedColor: const Color(0xFFF48120),
                 primary: const Color(0xFFF48120),
-                secondary: const Color(0xFF404242), // Cloudflare Dark Gray
-                background: const Color(0xFFF7F7F7), // Light Gray Background
+                secondary: Colors.grey[700]!,
+                background: Colors.white,
+                surface: Colors.white,
+                onSurface: Colors.grey[800]!,
+              ),
+              scaffoldBackgroundColor: Colors.grey[50],
+              cardTheme: CardTheme(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey[200]!),
+                ),
+                color: Colors.white,
               ),
               appBarTheme: const AppBarTheme(
                 backgroundColor: Color(0xFFF48120),
                 foregroundColor: Colors.white,
                 elevation: 0,
+                centerTitle: true,
               ),
-              floatingActionButtonTheme: const FloatingActionButtonThemeData(
-                backgroundColor: Color(0xFFF48120),
-                foregroundColor: Colors.white,
+              iconTheme: IconThemeData(
+                color: Colors.grey[700],
+              ),
+              floatingActionButtonTheme: FloatingActionButtonThemeData(
+                backgroundColor: Colors.white,
+                foregroundColor: Colors.grey[800],
+                elevation: 2,
               ),
               elevatedButtonTheme: ElevatedButtonThemeData(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFF48120),
-                  foregroundColor: Colors.white,
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.grey[800],
+                  elevation: 1,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+              textTheme: TextTheme(
+                titleLarge: TextStyle(
+                  color: Colors.grey[800],
+                  fontWeight: FontWeight.w600,
+                ),
+                bodyLarge: TextStyle(
+                  color: Colors.grey[700],
+                ),
+                bodyMedium: TextStyle(
+                  color: Colors.grey[600],
                 ),
               ),
             ),
