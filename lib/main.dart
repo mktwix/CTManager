@@ -221,7 +221,7 @@ void main() async {
   }, (error, stack) {
     logger.e('Uncaught error', error, stack);
     // Show error screen if the app is already running
-    if (WidgetsBinding.instance.renderViewElement != null) {
+    if (WidgetsBinding.instance.rootElement != null) {
       runApp(ErrorScreen(
         errorMessage: 'An unexpected error occurred',
         error: error,

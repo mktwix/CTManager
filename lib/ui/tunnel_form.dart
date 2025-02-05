@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../models/tunnel.dart';
 import '../providers/tunnel_provider.dart';
 import 'package:provider/provider.dart';
-import '../services/cloudflared_service.dart';
 // Removed unused import
 // import 'package:logger/logger.dart';
 

@@ -5,10 +5,7 @@ import '../models/tunnel.dart';
 import '../services/database_service.dart';
 import '../services/cloudflared_service.dart';
 import 'package:logger/logger.dart';
-import 'package:process/process.dart';
 import 'dart:io';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import '../services/log_service.dart';
 
 class TunnelProvider extends ChangeNotifier {
@@ -45,9 +42,11 @@ class TunnelProvider extends ChangeNotifier {
         return;
       }
 
-      // Get running tunnel info
-      await checkRunningTunnel();
+      // Load tunnels from database first
       await loadTunnels();
+
+      // Get running tunnel processes and update states
+      await checkRunningTunnel();
     } catch (e, stack) {
       _error = 'Failed to initialize: ${e.toString()}';
       _logger.e(_error!, e, stack);
@@ -62,25 +61,48 @@ class TunnelProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
       
-      // Store currently running tunnels
-      final runningTunnels = _tunnels.where((t) => t.isRunning).toList();
+      LogService().addLog('Checking running tunnel state...');
+      LogService().addLog('Current forwarding status: $_forwardingStatus');
+      LogService().addLog('Current tunnels: ${_tunnels.map((t) => '${t.domain}:${t.port} (running: ${t.isRunning})')}');
       
-      // Stop all running tunnels
-      for (var tunnel in runningTunnels) {
-        await stopForwarding(tunnel.domain);
+      // Get all currently running cloudflared processes
+      final runningProcesses = await _cfService.getRunningCloudflaredProcesses();
+      LogService().addLog('Found running processes: $runningProcesses');
+      
+      // Clear and rebuild forwarding status based on running processes
+      _forwardingStatus.clear();
+      
+      // Update tunnel states based on running processes
+      for (var tunnel in _tunnels) {
+        final isRunning = runningProcesses.containsKey(tunnel.domain) && 
+                         runningProcesses[tunnel.domain].toString() == tunnel.port;
+        
+        LogService().addLog('Checking tunnel ${tunnel.domain}:${tunnel.port} - Current state: ${tunnel.isRunning}, Detected state: $isRunning');
+        
+        // If the tunnel is running, make sure it's in the forwarding status
+        if (isRunning) {
+          LogService().addLog('Adding to forwarding status: ${tunnel.domain} -> ${tunnel.port}');
+          _forwardingStatus[tunnel.domain] = tunnel.port;
+        }
+        
+        if (tunnel.isRunning != isRunning) {
+          LogService().addLog('State mismatch detected for ${tunnel.domain} - Updating state');
+          final updatedTunnel = tunnel.copyWith(isRunning: isRunning);
+          await saveTunnel(updatedTunnel);
+        }
       }
       
+      LogService().addLog('Updated forwarding status map: $_forwardingStatus');
+      
+      // Get running tunnel info from cloudflared service
       _runningTunnel = await _cfService.getRunningTunnelInfo();
+      LogService().addLog('Running tunnel info: $_runningTunnel');
       
-      // Restart previously running tunnels
-      for (var tunnel in runningTunnels) {
-        await startForwarding(tunnel.domain, tunnel.port);
-      }
-      
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _logger.e('Error checking running tunnel', e);
+    } catch (e, stack) {
+      _logger.e('Error checking running tunnel', e, stack);
+      LogService().addLog('Error checking running tunnel: $e');
+      LogService().addLog('Stack trace: $stack');
+    } finally {
       _isLoading = false;
       notifyListeners();
     }
@@ -116,24 +138,38 @@ class TunnelProvider extends ChangeNotifier {
   Future<void> stopForwarding(String domain) async {
     try {
       LogService().addLog('Attempting to stop forwarding for $domain');
+      LogService().addLog('Current forwarding status: $_forwardingStatus');
       
       final port = _forwardingStatus[domain];
       if (port != null) {
+        LogService().addLog('Found port $port for domain $domain');
+        
+        // Update running status of the tunnel before stopping
+        final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
+        if (tunnelIndex != -1) {
+          final tunnel = _tunnels[tunnelIndex];
+          LogService().addLog('Found tunnel in list: ${tunnel.domain}:${tunnel.port} (running: ${tunnel.isRunning})');
+        }
+        
         await _cfService.stopPortForwarding(port);
         _forwardingStatus.remove(domain);
         LogService().addLog('Successfully stopped forwarding for $domain');
+        LogService().addLog('Updated forwarding status: $_forwardingStatus');
         
         // Update running status of the tunnel
-        final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
         if (tunnelIndex != -1) {
           final tunnel = _tunnels[tunnelIndex];
           final updatedTunnel = tunnel.copyWith(isRunning: false);
           _tunnels[tunnelIndex] = updatedTunnel;
+          LogService().addLog('Updated tunnel state: ${updatedTunnel.domain}:${updatedTunnel.port} (running: ${updatedTunnel.isRunning})');
           notifyListeners();
         }
+      } else {
+        LogService().addLog('No port found for domain $domain in forwarding status');
       }
     } catch (e, stack) {
       LogService().addLog('Error stopping forwarding for $domain: $e');
+      LogService().addLog('Stack trace: $stack');
       _logger.e('Failed to stop forwarding', e, stack);
     }
   }

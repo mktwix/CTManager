@@ -256,56 +256,111 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
       final portNum = int.parse(port);
       LogService().addLog('Starting process termination for port $port');
       
-      // Log initial state
+      // Log initial state and process maps
       final initialPortCheck = await checkPortAvailability(portNum);
       LogService().addLog('Initial port state - Port $port is ${initialPortCheck ? "available" : "in use"}');
+      LogService().addLog('Current _cloudflaredPids map: $_cloudflaredPids');
+      LogService().addLog('Current _processes map: $_processes');
+      LogService().addLog('Current _activeTunnels map: $_activeTunnels');
+      
+      // Get all running cloudflared processes first
+      final result = await Process.run(
+        'powershell',
+        [
+          '-Command',
+          '''Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq "cloudflared.exe" } | Select-Object ProcessId,CommandLine | ConvertTo-Json'''
+        ],
+        runInShell: true
+      );
+      
+      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        LogService().addLog('Found running cloudflared processes: ${result.stdout.toString().trim()}');
+      } else {
+        LogService().addLog('No running cloudflared processes found via Get-CimInstance');
+      }
       
       final cloudflaredPid = _cloudflaredPids[portNum];
       if (cloudflaredPid != null) {
-        LogService().addLog('Attempting to kill cloudflared process with PID: $cloudflaredPid');
+        LogService().addLog('Found stored PID $cloudflaredPid for port $port');
         
-        // Try to kill the specific process first
+        // Check if process exists before trying to kill it
+        final processCheckResult = await Process.run(
+          'powershell',
+          [
+            '-Command',
+            'Get-Process -Id $cloudflaredPid -ErrorAction SilentlyContinue; \$?'
+          ],
+          runInShell: true
+        );
+        
+        LogService().addLog('Process check result: ${processCheckResult.stdout.toString().trim()}');
+        
+        // Try to kill the specific process
         final killResult = await Process.run(
           'powershell',
           [
             '-Command',
-            'Stop-Process -Id ${cloudflaredPid} -Force; \$?'
+            'Stop-Process -Id ${cloudflaredPid} -Force -ErrorAction SilentlyContinue; \$?'
           ],
           runInShell: true
         );
 
+        LogService().addLog('Kill process result: ${killResult.stdout.toString().trim()}');
+
         if (killResult.exitCode == 0) {
-          // Quick check for port availability
+          // More detailed port availability checking
           for (int i = 0; i < 5; i++) {
             await Future.delayed(const Duration(milliseconds: 200));
-            if (await checkPortAvailability(portNum)) {
+            final portCheck = await checkPortAvailability(portNum);
+            LogService().addLog('Port availability check ${i + 1}/5: ${portCheck ? "available" : "still in use"}');
+            
+            if (portCheck) {
               LogService().addLog('Process successfully terminated and port is available');
               _cloudflaredPids.remove(portNum);
               _processes.remove(portNum);
               _activeTunnels.removeWhere((domain, tunnel) => tunnel.port == port);
+              
+              // Verify cleanup
+              LogService().addLog('After cleanup - _cloudflaredPids: $_cloudflaredPids');
+              LogService().addLog('After cleanup - _processes: $_processes');
+              LogService().addLog('After cleanup - _activeTunnels: $_activeTunnels');
               return;
             }
           }
+          LogService().addLog('Port still in use after killing process with PID $cloudflaredPid');
+        } else {
+          LogService().addLog('Failed to kill process with PID $cloudflaredPid');
         }
+      } else {
+        LogService().addLog('No stored PID found for port $port');
       }
 
       // If we're here, either no PID was found or the kill wasn't successful
-      // Try taskkill as a faster alternative to Get-CimInstance
+      LogService().addLog('Attempting taskkill as fallback');
       final taskkillResult = await Process.run(
         'taskkill',
         ['/F', '/IM', 'cloudflared.exe'],
         runInShell: true
       );
       LogService().addLog('Taskkill result: ${taskkillResult.stdout.toString().trim()}');
+      LogService().addLog('Taskkill error output: ${taskkillResult.stderr.toString().trim()}');
       
-      // Quick final check
+      // Quick final check with more logging
       for (int i = 0; i < 5; i++) {
         await Future.delayed(const Duration(milliseconds: 200));
-        if (await checkPortAvailability(portNum)) {
+        final portCheck = await checkPortAvailability(portNum);
+        LogService().addLog('Final port check ${i + 1}/5: ${portCheck ? "available" : "still in use"}');
+        
+        if (portCheck) {
           LogService().addLog('Port is now available after taskkill');
           _cloudflaredPids.remove(portNum);
           _processes.remove(portNum);
           _activeTunnels.removeWhere((domain, tunnel) => tunnel.port == port);
+          
+          // Verify final state
+          LogService().addLog('Final state - _cloudflaredPids: $_cloudflaredPids');
+          LogService().addLog('Final state - _processes: $_processes');
+          LogService().addLog('Final state - _activeTunnels: $_activeTunnels');
           return;
         }
       }
@@ -315,6 +370,7 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
     } catch (e, stack) {
       _logger.e('Error stopping port forwarding: $e\n$stack');
       LogService().addLog('Error stopping port forwarding: $e');
+      LogService().addLog('Stack trace: $stack');
     }
   }
 
@@ -879,5 +935,51 @@ ingress:
 
   List<Tunnel> getActiveTunnels() {
     return _activeTunnels.values.toList();
+  }
+
+  // Add this new method to check for running cloudflared processes
+  Future<Map<String, int>> getRunningCloudflaredProcesses() async {
+    try {
+      final result = await Process.run(
+        'powershell',
+        [
+          '-Command',
+          '''Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq "cloudflared.exe" } | Select-Object ProcessId,CommandLine | ConvertTo-Json'''
+        ],
+        runInShell: true
+      );
+
+      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        final Map<String, int> runningTunnels = {};
+        
+        try {
+          final processes = json.decode(result.stdout.toString().trim());
+          final processList = processes is List ? processes : [processes];
+          
+          for (var process in processList) {
+            if (process['CommandLine'] != null) {
+              final commandLine = process['CommandLine'].toString();
+              final hostnameMatch = RegExp(r'--hostname\s+([^\s]+)').firstMatch(commandLine);
+              final portMatch = RegExp(r'localhost:(\d+)').firstMatch(commandLine);
+              
+              if (hostnameMatch != null && portMatch != null) {
+                final domain = hostnameMatch.group(1)!;
+                final port = int.parse(portMatch.group(1)!);
+                runningTunnels[domain] = port;
+              }
+            }
+          }
+        } catch (e) {
+          _logger.e('Error parsing process info: $e');
+        }
+        
+        return runningTunnels;
+      }
+      
+      return {};
+    } catch (e) {
+      _logger.e('Error getting running cloudflared processes: $e');
+      return {};
+    }
   }
 }

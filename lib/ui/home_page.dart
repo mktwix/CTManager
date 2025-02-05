@@ -4,17 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/tunnel_provider.dart';
 import '../models/tunnel.dart';
-import '../services/cloudflared_service.dart';
 import 'tunnel_form.dart';
-import 'dart:io';
-import 'package:logger/logger.dart';
-import 'create_tunnel_dialog.dart';
-import 'tunnel_selection_dialog.dart';
-import 'status_dialog.dart';
 import 'tunnel_list_item.dart';
-import 'logs_page.dart';
 import '../services/log_service.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 const cloudflareOrange = Color(0xFFF48120);
@@ -94,207 +86,212 @@ class HomePage extends StatelessWidget {
                           ),
                         ),
 
-                        // Port Forwarding Section
+                        // Main content row containing Port Forwarding and Logs
                         Expanded(
-                          child: Card(
-                            margin: const EdgeInsets.all(16),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        'Port Forwarding',
-                                        style: Theme.of(context).textTheme.titleLarge,
-                                      ),
-                                      Row(
-                                        children: [
-                                          IconButton(
-                                            icon: Icon(Icons.add_circle_outline, 
-                                              color: Theme.of(context).primaryColor,
-                                              size: 28,
+                          child: Row(
+                            children: [
+                              // Port Forwarding Section
+                              Expanded(
+                                flex: 1,
+                                child: Card(
+                                  margin: const EdgeInsets.only(left: 16, right: 8, bottom: 16),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              'Port Forwarding',
+                                              style: Theme.of(context).textTheme.titleLarge,
                                             ),
-                                            onPressed: () => _showAddForwardDialog(context),
-                                            tooltip: 'Add Port Forward',
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Container(
-                                            decoration: BoxDecoration(
-                                              color: Colors.grey[100],
-                                              borderRadius: BorderRadius.circular(20),
-                                            ),
-                                            child: Row(
+                                            Row(
                                               children: [
                                                 IconButton(
-                                                  icon: Icon(Icons.play_arrow_rounded,
-                                                    color: Colors.grey[700],
+                                                  icon: Icon(Icons.add_circle_outline, 
+                                                    color: Theme.of(context).primaryColor,
+                                                    size: 28,
                                                   ),
-                                                  onPressed: () {
-                                                    for (var tunnel in provider.tunnels) {
-                                                      if (!tunnel.isRunning) {
-                                                        provider.startForwarding(tunnel.domain, tunnel.port);
-                                                      }
-                                                    }
-                                                  },
-                                                  tooltip: 'Start All',
+                                                  onPressed: () => _showAddForwardDialog(context),
+                                                  tooltip: 'Add Port Forward',
                                                 ),
-                                                IconButton(
-                                                  icon: Icon(Icons.stop_rounded,
-                                                    color: Colors.grey[700],
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.grey[100],
+                                                    borderRadius: BorderRadius.circular(20),
                                                   ),
-                                                  onPressed: () {
-                                                    for (var tunnel in provider.tunnels) {
-                                                      if (tunnel.isRunning) {
-                                                        provider.stopForwarding(tunnel.domain);
-                                                      }
-                                                    }
-                                                  },
-                                                  tooltip: 'Stop All',
+                                                  child: Row(
+                                                    children: [
+                                                      IconButton(
+                                                        icon: Icon(Icons.play_arrow_rounded,
+                                                          color: Colors.grey[700],
+                                                        ),
+                                                        onPressed: () {
+                                                          for (var tunnel in provider.tunnels) {
+                                                            if (!tunnel.isRunning) {
+                                                              provider.startForwarding(tunnel.domain, tunnel.port);
+                                                            }
+                                                          }
+                                                        },
+                                                        tooltip: 'Start All',
+                                                      ),
+                                                      IconButton(
+                                                        icon: Icon(Icons.stop_rounded,
+                                                          color: Colors.grey[700],
+                                                        ),
+                                                        onPressed: () {
+                                                          for (var tunnel in provider.tunnels) {
+                                                            if (tunnel.isRunning) {
+                                                              provider.stopForwarding(tunnel.domain);
+                                                            }
+                                                          }
+                                                        },
+                                                        tooltip: 'Stop All',
+                                                      ),
+                                                    ],
+                                                  ),
                                                 ),
                                               ],
                                             ),
-                                          ),
-                                        ],
+                                          ],
+                                        ),
+                                        const SizedBox(height: 16),
+                                        // Active Forwards List
+                                        Expanded(
+                                          child: provider.tunnels.isEmpty
+                                              ? Center(
+                                                  child: Column(
+                                                    mainAxisAlignment: MainAxisAlignment.center,
+                                                    children: [
+                                                      Icon(Icons.cloud_off_outlined, 
+                                                        size: 48, 
+                                                        color: Colors.grey[400],
+                                                      ),
+                                                      const SizedBox(height: 16),
+                                                      Text(
+                                                        'No saved tunnels',
+                                                        style: TextStyle(
+                                                          color: Colors.grey[600],
+                                                          fontSize: 16,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                )
+                                              : ListView.builder(
+                                                  itemCount: provider.tunnels.length,
+                                                  itemBuilder: (context, index) {
+                                                    final tunnel = provider.tunnels[index];
+                                                    return TunnelListItem(
+                                                      tunnel: tunnel,
+                                                    );
+                                                  },
+                                                ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              // Logs Section
+                              Expanded(
+                                flex: 1,
+                                child: Card(
+                                  margin: const EdgeInsets.only(left: 8, right: 16, bottom: 16),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey[50],
+                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.terminal_rounded,
+                                                  size: 20,
+                                                  color: Colors.grey[700],
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  'Logs',
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.grey[800],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            Row(
+                                              children: [
+                                                IconButton(
+                                                  icon: Icon(
+                                                    Icons.copy_outlined,
+                                                    size: 20,
+                                                    color: Colors.grey[700],
+                                                  ),
+                                                  onPressed: () {
+                                                    final logs = LogService().logs.join('\n');
+                                                    if (logs.isNotEmpty) {
+                                                      Clipboard.setData(ClipboardData(text: logs));
+                                                      ScaffoldMessenger.of(context).showSnackBar(
+                                                        const SnackBar(content: Text('Logs copied to clipboard')),
+                                                      );
+                                                    }
+                                                  },
+                                                  tooltip: 'Copy all logs',
+                                                ),
+                                                IconButton(
+                                                  icon: Icon(
+                                                    Icons.delete_outline_rounded,
+                                                    size: 20,
+                                                    color: Colors.grey[700],
+                                                  ),
+                                                  onPressed: () => LogService().clearLogs(),
+                                                  tooltip: 'Clear logs',
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: AnimatedBuilder(
+                                          animation: LogService(),
+                                          builder: (context, _) {
+                                            final logs = LogService().logs;
+                                            return Container(
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[50],
+                                                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                                              ),
+                                              child: SingleChildScrollView(
+                                                padding: const EdgeInsets.all(16),
+                                                child: SelectableText(
+                                                  logs.reversed.join('\n'),
+                                                  style: TextStyle(
+                                                    fontFamily: 'monospace',
+                                                    fontSize: 12,
+                                                    color: Colors.grey[800],
+                                                    height: 1.5,
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        ),
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 16),
-                                  // Active Forwards List
-                                  Expanded(
-                                    child: provider.tunnels.isEmpty
-                                        ? Center(
-                                            child: Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(Icons.cloud_off_outlined, 
-                                                  size: 48, 
-                                                  color: Colors.grey[400],
-                                                ),
-                                                const SizedBox(height: 16),
-                                                Text(
-                                                  'No saved tunnels',
-                                                  style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 16,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          )
-                                        : ListView.builder(
-                                            itemCount: provider.tunnels.length,
-                                            itemBuilder: (context, index) {
-                                              final tunnel = provider.tunnels[index];
-                                              return TunnelListItem(
-                                                tunnel: tunnel,
-                                              );
-                                            },
-                                          ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        // Logs Section
-                        Container(
-                          height: 200,
-                          margin: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            border: Border.all(color: Colors.grey[200]!),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[50],
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.terminal_rounded,
-                                          size: 20,
-                                          color: Colors.grey[700],
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'Logs',
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            color: Colors.grey[800],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Row(
-                                      children: [
-                                        IconButton(
-                                          icon: Icon(
-                                            Icons.copy_outlined,
-                                            size: 20,
-                                            color: Colors.grey[700],
-                                          ),
-                                          onPressed: () {
-                                            final logs = LogService().logs.join('\n');
-                                            if (logs.isNotEmpty) {
-                                              Clipboard.setData(ClipboardData(text: logs));
-                                              ScaffoldMessenger.of(context).showSnackBar(
-                                                const SnackBar(content: Text('Logs copied to clipboard')),
-                                              );
-                                            }
-                                          },
-                                          tooltip: 'Copy all logs',
-                                        ),
-                                        IconButton(
-                                          icon: Icon(
-                                            Icons.delete_outline_rounded,
-                                            size: 20,
-                                            color: Colors.grey[700],
-                                          ),
-                                          onPressed: () => LogService().clearLogs(),
-                                          tooltip: 'Clear logs',
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Expanded(
-                                child: AnimatedBuilder(
-                                  animation: LogService(),
-                                  builder: (context, _) {
-                                    final logs = LogService().logs;
-                                    return Container(
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[50],
-                                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                                      ),
-                                      child: SingleChildScrollView(
-                                        padding: const EdgeInsets.all(16),
-                                        child: SelectableText(
-                                          logs.reversed.join('\n'),
-                                          style: TextStyle(
-                                            fontFamily: 'monospace',
-                                            fontSize: 12,
-                                            color: Colors.grey[800],
-                                            height: 1.5,
-                                          ),
-                                        ),
-                                      ),
-                                    );
-                                  },
                                 ),
                               ),
                             ],

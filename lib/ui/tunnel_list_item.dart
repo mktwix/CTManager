@@ -15,9 +15,19 @@ class TunnelListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
       child: ListTile(
-        title: Text(tunnel.domain),
-        subtitle: Text('${tunnel.protocol} - Port ${tunnel.port}'),
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        title: Text(
+          tunnel.domain,
+          style: const TextStyle(fontSize: 14),
+        ),
+        subtitle: Text(
+          '${tunnel.protocol} - Port ${tunnel.port}',
+          style: const TextStyle(fontSize: 12),
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -26,7 +36,10 @@ class TunnelListItem extends StatelessWidget {
               icon: Icon(
                 tunnel.isRunning ? Icons.stop : Icons.play_arrow,
                 color: tunnel.isRunning ? Colors.red : Colors.green,
+                size: 20,
               ),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(8),
               onPressed: () {
                 final provider = context.read<TunnelProvider>();
                 if (tunnel.isRunning) {
@@ -38,14 +51,18 @@ class TunnelListItem extends StatelessWidget {
             ),
             // Open button
             IconButton(
-              icon: const Icon(Icons.open_in_new),
+              icon: const Icon(Icons.open_in_new, size: 20),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(8),
               onPressed: () {
                 context.read<TunnelProvider>().launchConnection(tunnel);
               },
             ),
             // Edit button
             IconButton(
-              icon: const Icon(Icons.edit),
+              icon: const Icon(Icons.edit, size: 20),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(8),
               onPressed: () {
                 showDialog(
                   context: context,
@@ -55,7 +72,9 @@ class TunnelListItem extends StatelessWidget {
             ),
             // Delete button
             IconButton(
-              icon: const Icon(Icons.delete),
+              icon: const Icon(Icons.delete, size: 20),
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(8),
               onPressed: () {
                 showDialog(
                   context: context,
