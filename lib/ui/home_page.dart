@@ -12,8 +12,15 @@ import 'package:flutter/services.dart';
 const cloudflareOrange = Color(0xFFF48120);
 const cloudflareBlue = Color(0xFF404242);
 
-class HomePage extends StatelessWidget {
-  const HomePage({super.key});
+class HomePage extends StatefulWidget {
+  const HomePage({Key? key}) : super(key: key);
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  LogCategory? _selectedCategory;
 
   @override
   Widget build(BuildContext context) {
@@ -217,17 +224,41 @@ class HomePage extends StatelessWidget {
                                             Row(
                                               children: [
                                                 Icon(
-                                                  Icons.terminal_rounded,
+                                                  Icons.article_outlined,
                                                   size: 20,
                                                   color: Colors.grey[700],
                                                 ),
                                                 const SizedBox(width: 8),
-                                                Text(
+                                                const Text(
                                                   'Logs',
                                                   style: TextStyle(
-                                                    fontWeight: FontWeight.w600,
-                                                    color: Colors.grey[800],
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
                                                   ),
+                                                ),
+                                                const SizedBox(width: 16),
+                                                StatefulBuilder(
+                                                  builder: (context, setState) {
+                                                    return DropdownButton<LogCategory?>(
+                                                      value: _selectedCategory,
+                                                      hint: const Text('All Categories'),
+                                                      items: [
+                                                        const DropdownMenuItem<LogCategory?>(
+                                                          value: null,
+                                                          child: Text('All Categories'),
+                                                        ),
+                                                        ...LogCategory.values.map((category) {
+                                                          return DropdownMenuItem<LogCategory?>(
+                                                            value: category,
+                                                            child: Text(category.name.toUpperCase()),
+                                                          );
+                                                        }).toList(),
+                                                      ],
+                                                      onChanged: (LogCategory? value) {
+                                                        setState(() => _selectedCategory = value);
+                                                      },
+                                                    );
+                                                  },
                                                 ),
                                               ],
                                             ),
@@ -240,15 +271,18 @@ class HomePage extends StatelessWidget {
                                                     color: Colors.grey[700],
                                                   ),
                                                   onPressed: () {
-                                                    final logs = LogService().logs.join('\n');
+                                                    final logs = LogService().getLogsByCategory(_selectedCategory).map((log) => log.toString()).join('\n');
                                                     if (logs.isNotEmpty) {
                                                       Clipboard.setData(ClipboardData(text: logs));
                                                       ScaffoldMessenger.of(context).showSnackBar(
-                                                        const SnackBar(content: Text('Logs copied to clipboard')),
+                                                        const SnackBar(
+                                                          content: Text('Logs copied to clipboard'),
+                                                          duration: Duration(seconds: 2),
+                                                        ),
                                                       );
                                                     }
                                                   },
-                                                  tooltip: 'Copy all logs',
+                                                  tooltip: 'Copy logs',
                                                 ),
                                                 IconButton(
                                                   icon: Icon(
@@ -268,7 +302,7 @@ class HomePage extends StatelessWidget {
                                         child: AnimatedBuilder(
                                           animation: LogService(),
                                           builder: (context, _) {
-                                            final logs = LogService().logs;
+                                            final logs = LogService().getLogsByCategory(_selectedCategory);
                                             return Container(
                                               decoration: BoxDecoration(
                                                 color: Colors.grey[50],
@@ -277,7 +311,7 @@ class HomePage extends StatelessWidget {
                                               child: SingleChildScrollView(
                                                 padding: const EdgeInsets.all(16),
                                                 child: SelectableText(
-                                                  logs.reversed.join('\n'),
+                                                  logs.reversed.map((log) => log.toString()).join('\n'),
                                                   style: TextStyle(
                                                     fontFamily: 'monospace',
                                                     fontSize: 12,

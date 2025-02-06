@@ -16,6 +16,7 @@ import 'package:process/process.dart';
 import 'services/database_service.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 
 final Logger logger = Logger(
   printer: PrettyPrinter(),
@@ -135,8 +136,10 @@ class ErrorScreen extends StatelessWidget {
 }
 
 void main() async {
-  // Add this before runApp()
-  ErrorWidget.builder = (FlutterErrorDetails details) => Container();
+  // For development, show detailed error widget; in release mode, use a blank error widget
+  if (!kDebugMode) {
+    ErrorWidget.builder = (FlutterErrorDetails details) => Container();
+  }
   
   runZonedGuarded(() async {
     try {
