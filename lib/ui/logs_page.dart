@@ -10,7 +10,41 @@ class LogsPage extends StatefulWidget {
 
 class _LogsPageState extends State<LogsPage> {
   final LogService logService = LogService();
-  LogCategory? selectedCategory;
+  LogCategory? _selectedCategory;
+  List<LogEntry> _currentLogs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    logService.addListener(_onLogServiceChanged);
+    _updateLogs(); // Initialize logs
+  }
+
+  void _onLogServiceChanged() {
+    print('LogsPage: _onLogServiceChanged called');
+    _updateLogs();
+  }
+
+  void _updateLogs() {
+    print('LogsPage: _updateLogs called with category: $_selectedCategory');
+    final filteredLogs = logService.getLogsByCategory(_selectedCategory);
+    print('LogsPage: Got ${filteredLogs.length} logs after filtering');
+    setState(() {
+      _currentLogs = List<LogEntry>.from(filteredLogs);
+    });
+  }
+
+  void _onCategoryChanged(LogCategory? category) {
+    print('LogsPage: Category changed to: ${category?.name ?? "ALL"}');
+    _selectedCategory = category;
+    _updateLogs();
+  }
+
+  @override
+  void dispose() {
+    logService.removeListener(_onLogServiceChanged);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,12 +53,8 @@ class _LogsPageState extends State<LogsPage> {
         title: const Text('Application Logs'),
         actions: [
           PopupMenuButton<LogCategory?>(
-            initialValue: selectedCategory,
-            onSelected: (LogCategory? category) {
-              setState(() {
-                selectedCategory = category;
-              });
-            },
+            initialValue: _selectedCategory,
+            onSelected: _onCategoryChanged,
             itemBuilder: (BuildContext context) => [
               const PopupMenuItem<LogCategory?>(
                 value: null,
@@ -41,7 +71,7 @@ class _LogsPageState extends State<LogsPage> {
                 children: [
                   const Icon(Icons.filter_list),
                   const SizedBox(width: 4),
-                  Text(selectedCategory?.name.toUpperCase() ?? 'ALL'),
+                  Text(_selectedCategory?.name.toUpperCase() ?? 'ALL'),
                 ],
               ),
             ),
@@ -54,17 +84,16 @@ class _LogsPageState extends State<LogsPage> {
           ),
         ],
       ),
-      body: AnimatedBuilder(
-        animation: logService,
-        builder: (context, child) {
-          final logs = logService.getLogsByCategory(selectedCategory);
-          if (logs.isEmpty) {
+      body: Builder(
+        builder: (context) {
+          if (_currentLogs.isEmpty) {
             return const Center(child: Text('No logs available'));
           }
           return ListView.builder(
-            itemCount: logs.length,
+            key: ValueKey('logs_${_selectedCategory?.name ?? 'all'}_${_currentLogs.length}'),
+            itemCount: _currentLogs.length,
             itemBuilder: (context, index) {
-              final log = logs[index];
+              final log = _currentLogs[index];
               return Padding(
                 padding: const EdgeInsets.all(4.0),
                 child: Card(

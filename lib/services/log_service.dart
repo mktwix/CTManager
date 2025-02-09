@@ -36,11 +36,13 @@ class LogService extends ChangeNotifier {
   List<LogEntry> get logs => List.unmodifiable(_logs);
 
   void addLog(String message, {LogCategory category = LogCategory.info}) {
+    print('LogService: Adding log: $message, category: ${category.name}');
     _logs.add(LogEntry(
       timestamp: DateTime.now(),
       message: message,
       category: category,
     ));
+    print('LogService: Total logs after adding: ${_logs.length}');
     notifyListeners();
   }
 
@@ -51,8 +53,15 @@ class LogService extends ChangeNotifier {
   void network(String message) => addLog(message, category: LogCategory.network);
 
   List<LogEntry> getLogsByCategory(LogCategory? category) {
-    if (category == null) return logs;
-    return logs.where((log) => log.category == category).toList();
+    print('LogService: Getting logs by category: ${category?.name ?? "ALL"}');
+    print('LogService: Total logs: ${_logs.length}');
+    if (category == null) {
+      print('LogService: Returning all logs');
+      return List<LogEntry>.from(_logs);
+    }
+    final filtered = _logs.where((log) => log.category == category).toList();
+    print('LogService: Returning ${filtered.length} filtered logs');
+    return filtered;
   }
 
   void clearLogs() {

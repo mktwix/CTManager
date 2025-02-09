@@ -237,27 +237,25 @@ class _HomePageState extends State<HomePage> {
                                                   ),
                                                 ),
                                                 const SizedBox(width: 16),
-                                                StatefulBuilder(
-                                                  builder: (context, setState) {
-                                                    return DropdownButton<LogCategory?>(
-                                                      value: _selectedCategory,
-                                                      hint: const Text('All Categories'),
-                                                      items: [
-                                                        const DropdownMenuItem<LogCategory?>(
-                                                          value: null,
-                                                          child: Text('All Categories'),
-                                                        ),
-                                                        ...LogCategory.values.map((category) {
-                                                          return DropdownMenuItem<LogCategory?>(
-                                                            value: category,
-                                                            child: Text(category.name.toUpperCase()),
-                                                          );
-                                                        }).toList(),
-                                                      ],
-                                                      onChanged: (LogCategory? value) {
-                                                        setState(() => _selectedCategory = value);
-                                                      },
-                                                    );
+                                                DropdownButton<LogCategory?>(
+                                                  value: _selectedCategory,
+                                                  hint: const Text('All Categories'),
+                                                  items: [
+                                                    const DropdownMenuItem<LogCategory?>(
+                                                      value: null,
+                                                      child: Text('All Categories'),
+                                                    ),
+                                                    ...LogCategory.values.map((category) {
+                                                      return DropdownMenuItem<LogCategory?>(
+                                                        value: category,
+                                                        child: Text(category.name.toUpperCase()),
+                                                      );
+                                                    }).toList(),
+                                                  ],
+                                                  onChanged: (LogCategory? value) {
+                                                    setState(() {
+                                                      _selectedCategory = value;
+                                                    });
                                                   },
                                                 ),
                                               ],
@@ -299,27 +297,32 @@ class _HomePageState extends State<HomePage> {
                                         ),
                                       ),
                                       Expanded(
-                                        child: AnimatedBuilder(
-                                          animation: LogService(),
-                                          builder: (context, _) {
-                                            final logs = LogService().getLogsByCategory(_selectedCategory);
-                                            return Container(
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey[50],
-                                                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                                              ),
-                                              child: SingleChildScrollView(
-                                                padding: const EdgeInsets.all(16),
-                                                child: SelectableText(
-                                                  logs.reversed.map((log) => log.toString()).join('\n'),
-                                                  style: TextStyle(
-                                                    fontFamily: 'monospace',
-                                                    fontSize: 12,
-                                                    color: Colors.grey[800],
-                                                    height: 1.5,
+                                        child: ValueListenableBuilder<LogCategory?>(
+                                          valueListenable: ValueNotifier(_selectedCategory),
+                                          builder: (context, category, _) {
+                                            return AnimatedBuilder(
+                                              animation: LogService(),
+                                              builder: (context, _) {
+                                                final logs = LogService().getLogsByCategory(category);
+                                                return Container(
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.grey[50],
+                                                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
                                                   ),
-                                                ),
-                                              ),
+                                                  child: SingleChildScrollView(
+                                                    padding: const EdgeInsets.all(16),
+                                                    child: SelectableText(
+                                                      logs.reversed.map((log) => log.toString()).join('\n'),
+                                                      style: TextStyle(
+                                                        fontFamily: 'monospace',
+                                                        fontSize: 12,
+                                                        color: Colors.grey[800],
+                                                        height: 1.5,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
                                             );
                                           },
                                         ),
