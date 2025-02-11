@@ -34,14 +34,6 @@ class TunnelProvider extends ChangeNotifier {
       _error = null;
       notifyListeners();
 
-      // Check if cloudflared is installed
-      final isInstalled = await _cfService.isCloudflaredInstalled();
-      if (!isInstalled) {
-        _error = 'Cloudflared is not installed';
-        _logger.e(_error!);
-        return;
-      }
-
       // Load tunnels from database first
       await loadTunnels();
 
@@ -69,9 +61,6 @@ class TunnelProvider extends ChangeNotifier {
       final runningProcesses = await _cfService.getRunningCloudflaredProcesses();
       LogService().info('Found running processes: $runningProcesses');
       
-      // Clear and rebuild forwarding status based on running processes
-      _forwardingStatus.clear();
-      
       // Update tunnel states based on running processes
       for (var tunnel in _tunnels) {
         final isRunning = runningProcesses.containsKey(tunnel.domain) && 
@@ -79,8 +68,8 @@ class TunnelProvider extends ChangeNotifier {
         
         LogService().info('Checking tunnel ${tunnel.domain}:${tunnel.port} - Current state: ${tunnel.isRunning}, Detected state: $isRunning');
         
-        // If the tunnel is running, make sure it's in the forwarding status
-        if (isRunning) {
+        // If the tunnel is running, update the forwarding status
+        if (isRunning && !_forwardingStatus.containsKey(tunnel.domain)) {
           LogService().info('Adding to forwarding status: ${tunnel.domain} -> ${tunnel.port}');
           _forwardingStatus[tunnel.domain] = tunnel.port;
         }

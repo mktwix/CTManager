@@ -32,8 +32,7 @@ END
 
 2 TEXTINCLUDE
 BEGIN
-    "#include ""winres.h""\r\n"
-    "\0"
+    "#include ""winres.h""\0"
 END
 
 3 TEXTINCLUDE
@@ -89,13 +88,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "ctmanager" "\0"
+            VALUE "CompanyName", "CTManager" "\0"
+            VALUE "FileDescription", "Cloudflare Tunnel Manager" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "ctmanager" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2024 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2024 CTManager. All rights reserved." "\0"
             VALUE "OriginalFilename", "ctmanager.exe" "\0"
-            VALUE "ProductName", "ctmanager" "\0"
+            VALUE "ProductName", "Cloudflare Tunnel Manager" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

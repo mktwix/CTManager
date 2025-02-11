@@ -960,4 +960,50 @@ ingress:
       return {};
     }
   }
+
+  // Install cloudflared
+  Future<bool> installCloudflared(String token) async {
+    try {
+      final tempDir = await Directory.systemTemp.createTemp('cloudflared_');
+      final installerPath = '${tempDir.path}\\cloudflared-windows-amd64.msi';
+      
+      // Download the installer
+      final client = HttpClient();
+      final request = await client.getUrl(
+        Uri.parse('https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi')
+      );
+      final response = await request.close();
+      
+      final file = File(installerPath);
+      await response.pipe(file.openWrite());
+      
+      // Run the installer
+      final installResult = await Process.run('msiexec', ['/i', installerPath, '/quiet', '/qn']);
+      
+      if (installResult.exitCode != 0) {
+        _logger.e('Failed to install cloudflared: ${installResult.stderr}');
+        return false;
+      }
+      
+      // Wait for installation to complete
+      await Future.delayed(const Duration(seconds: 5));
+      
+      // Install the service with the provided token
+      final serviceResult = await Process.run('cloudflared', [
+        'service',
+        'install',
+        token
+      ]);
+      
+      if (serviceResult.exitCode != 0) {
+        _logger.e('Failed to install cloudflared service: ${serviceResult.stderr}');
+        return false;
+      }
+      
+      return true;
+    } catch (e) {
+      _logger.e('Error installing cloudflared: $e');
+      return false;
+    }
+  }
 }

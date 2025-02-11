@@ -1,88 +1,43 @@
 # CTManager (Cloudflared Tunnel Manager)
 
-A Flutter desktop application for managing Cloudflare Tunnel (cloudflared) instances with a user-friendly interface.
+![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)
+![Platform](https://img.shields.io/badge/platform-windows-lightgrey.svg)
+
+A Flutter desktop application that manages Cloudflare Tunnel port forwarding, enabling tunnel-to-tunnel access without requiring Cloudflare WARP. Perfect for accessing services like RDP or SSH between different networks using Cloudflare Tunnels.
 
 ## Features
 
-- 🚇 Create and manage Cloudflare Tunnels
-- 🔄 Monitor tunnel status in real-time
-- 💾 Local SQLite database for tunnel configuration storage
-- 🔧 Automatic cloudflared binary installation and management
-- 🖥️ Cross-platform support (Windows, macOS, Linux)
-- 🎨 Material Design UI
+- 🔄 Easy port forwarding management for Cloudflare Tunnels
+- 🔍 Real-time port forwarding status monitoring
+- 💾 Local configuration storage
+- 🎨 Clean, intuitive user interface
 - 📝 Detailed logging system
 
 ## Prerequisites
 
-- Flutter SDK (>=2.18.0)
-- Dart SDK
-- A Cloudflare account with Tunnels enabled
+- Windows OS
+- Cloudflare account with at least one configured tunnel
+- Cloudflare Tunnel Token
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/ctmanager.git
-cd ctmanager
-```
+1. Download the latest release from the [Releases](https://github.com/mktwix/ctmanager/releases) page.
 
-2. Install dependencies:
-```bash
-flutter pub get
-```
+## Usage
 
-3. Run the application:
-```bash
-flutter run
-```
-
-## Project Structure
-
-```
-lib/
-├── main.dart              # Application entry point
-├── models/               # Data models
-├── providers/            # State management
-├── services/            # Business logic and external services
-│   ├── cloudflared_service.dart    # Cloudflared interaction
-│   ├── database_service.dart       # SQLite database operations
-│   └── install_cloudflared.dart    # Cloudflared installation
-└── ui/                  # User interface components
-    ├── home_page.dart
-    └── tunnel_form.dart
-```
-
-## Dependencies
-
-- `provider`: State management
-- `sqflite_common_ffi`: SQLite database
-- `path_provider`: File system access
-- `http`: Network requests
-- `shared_preferences`: Local storage
-- `logger`: Logging system
-
-## Development
-
-The application is built with Flutter and follows the Provider pattern for state management. It uses:
-
-- SQLite for persistent storage
-- Material Design for the user interface
-- Platform-specific code for native functionality
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Install and launch the application
+2. Add a new port forward by specifying:
+   - Domain (e.g., your-tunnel.domain.com)
+   - Local Port to forward
+3. Use your port forwards through the intuitive interface
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgments
-
-- Cloudflare for their excellent Tunnels service
-- Flutter team for the amazing framework
-- All contributors who participate in this project
+### Version 0.6.0
+- Initial release
+- Port forwarding management
+- Status monitoring
+- Logging system
+- Windows support

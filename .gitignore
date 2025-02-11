@@ -9,6 +9,8 @@
 .history
 .svn/
 migrate_working_dir/
+flutter_*.log
+.metadata
 
 # IntelliJ related
 *.iml
@@ -48,17 +50,56 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Platform specific build directories
+/windows/flutter/
+/macos/Flutter/
+/linux/flutter/
+/ios/Flutter/
+/windows/out/
+/windows/CMakeFiles/
+/windows/*.cmake
+/windows/CMakeCache.txt
+/windows/runner/
+
 # Temporary files
 *.tmp
 *.temp
+*.bak
+~$*
 
 # Local development files
 .env
 .env.local
+*.env.*
 
 # Generated files
 *.g.dart
 *.freezed.dart
+*.mocks.dart
 
 # Coverage reports
 coverage/
+
+# FVM (Flutter Version Management)
+.fvm/
+
+# Firebase configuration files
+google-services.json
+GoogleService-Info.plist
+
+# Desktop application specific
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+
+# GitHub specific
+.github/workflows/*.log
+*.swp
+*~
+._*

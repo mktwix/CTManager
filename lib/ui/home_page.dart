@@ -8,6 +8,7 @@ import 'tunnel_form.dart';
 import 'tunnel_list_item.dart';
 import '../services/log_service.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const cloudflareOrange = Color(0xFFF48120);
 const cloudflareBlue = Color(0xFF404242);
@@ -41,8 +42,46 @@ class _HomePageState extends State<HomePage> {
           body: provider.isLoading
               ? const Center(child: CircularProgressIndicator())
               : provider.runningTunnel == null
-                  ? const Center(
-                      child: Text('No running tunnel detected'),
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.cloud_off_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            'No running tunnel detected',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'To use this app, you need to:',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text('1. Go to Cloudflare Zero Trust dashboard'),
+                          const Text('2. Download and install the Cloudflared agent'),
+                          const Text('3. Create and run a tunnel'),
+                          const SizedBox(height: 24),
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final url = Uri.parse('https://one.dash.cloudflare.com/');
+                              if (await canLaunchUrl(url)) {
+                                await launchUrl(url);
+                              }
+                            },
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text('Open Zero Trust Dashboard'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: cloudflareOrange,
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            ),
+                          ),
+                        ],
+                      ),
                     )
                   : Column(
                       children: [

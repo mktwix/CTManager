@@ -1,5 +1,6 @@
 name: ctmanager
 description: A Cloudflared Manager application.
+version: 0.6.0
 publish_to: 'none'
 
 environment:
@@ -16,10 +17,43 @@ dependencies:
   shared_preferences: 2.0.18
   logger: 1.1.0
   process: ^4.2.4
+  url_launcher: ^6.2.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^2.0.0
+  msix: ^3.16.7
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/
+
+# Icon configuration for all platforms
+flutter_icons:
+  android: true
+  ios: true
+  windows:
+    generate: true
+    icon_size: 256
+  macos:
+    generate: true
+  linux:
+    generate: true
+  web:
+    generate: true
+  image_path: "assets/icon.jpg"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon.jpg"
+  remove_alpha_ios: true
+  min_sdk_android: 21
+
+msix_config:
+  display_name: Cloudflare Tunnel Manager
+  publisher_display_name: CTManager
+  identity_name: com.ctmanager.app
+  msix_version: 0.6.0.0
+  logo_path: assets/icon.jpg
+  capabilities: internetClient
