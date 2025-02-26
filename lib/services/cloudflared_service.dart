@@ -6,7 +6,6 @@ import '../models/tunnel.dart';
 import 'package:logger/logger.dart';
 import 'package:path/path.dart' as p;
 import 'dart:math';
-import 'package:process/process.dart';
 import 'dart:async';
 import '../services/log_service.dart';
 
@@ -32,43 +31,119 @@ class CloudflaredService {
     }
   }
 
+  // Check cloudflared authentication status
+  Future<bool> checkAuthenticationStatus() async {
+    try {
+      LogService().info('Checking cloudflared authentication status...');
+      ProcessResult result = await Process.run('cloudflared', ['tunnel', 'list'], runInShell: true);
+      
+      final stderr = result.stderr.toString();
+      if (stderr.contains('Cannot determine default origin certificate path') ||
+          stderr.contains('Error locating origin cert')) {
+        LogService().warning('Cloudflared is not authenticated. Please use the login button to authenticate.');
+        return false;
+      }
+      
+      return result.exitCode == 0;
+    } catch (e) {
+      LogService().error('Error checking authentication status: $e');
+      return false;
+    }
+  }
+
   // Get running tunnel info
   Future<Map<String, String>?> getRunningTunnelInfo() async {
     try {
       final services = await getRunningWindowsServices();
+      LogService().info('Raw services data: $services');
+      
       if (services.isEmpty) {
-        _logger.i('No cloudflared services found');
+        LogService().info('No cloudflared services found');
         return null;
       }
 
-      for (final service in services) {
-        final path = service['path'] ?? '';
-        if (path.isEmpty) continue;
+      bool isUserAuthenticated = await checkAuthenticationStatus();
+      if (!isUserAuthenticated) {
+        LogService().warning('Cloudflared is not authenticated. Some features will be limited.');
+        LogService().info('User can still view tunnel IDs but names will not be available.');
+      }
 
-        final tokenMatch = RegExp(r'--token[=\s"'' ]*([^\s''"]+)').firstMatch(path);
+      for (final service in services) {
+        final path = service['PathName'] ?? '';
+        LogService().info('Processing service PathName: $path');
+        
+        if (path.isEmpty) {
+          LogService().info('Empty PathName, skipping...');
+          continue;
+        }
+
+        final tokenMatch = RegExp(r'--token\s+([^\s"]+)').firstMatch(path);
+        LogService().info('Token match found: ${tokenMatch != null}');
+        
+        if (tokenMatch != null) {
+          LogService().info('Token match groups: ${tokenMatch.groupCount}, First group: ${tokenMatch.group(1)}');
+        }
+        
         if (tokenMatch == null) continue;
 
         final token = tokenMatch.group(1);
-        final tunnelId = await _extractTunnelIdFromToken(token!);
+        LogService().info('Extracted token (first 20 chars): ${token?.substring(0, min(20, token?.length ?? 0))}...');
+        
+        if (token == null) continue;
+
+        final tunnelId = await _extractTunnelIdFromToken(token);
+        LogService().info('Extracted tunnel ID: $tunnelId');
         
         if (tunnelId != null) {
+          // If user is not authenticated, return just the tunnel ID
+          if (!isUserAuthenticated) {
+            final result = {
+              'id': tunnelId,
+              'name': 'Login required to view name',
+              'requires_login': 'true'
+            };
+            LogService().info('Returning partial tunnel info (unauthenticated): $result');
+            return result;
+          }
+
+          // If authenticated, try to get full tunnel info
+          LogService().info('Attempting to list tunnels...');
           final tunnels = await listTunnels();
+          LogService().info('Available tunnels from Cloudflare: $tunnels');
+          
+          LogService().info('Looking for tunnel with ID: $tunnelId');
           final tunnel = tunnels.firstWhere(
             (t) => t['id'].toString().toLowerCase() == tunnelId.toLowerCase(),
-            orElse: () => <String, String>{},
+            orElse: () {
+              LogService().info('No matching tunnel found with ID: $tunnelId');
+              return <String, String>{};
+            },
           );
+          LogService().info('Matched tunnel details: $tunnel');
 
           if (tunnel.isNotEmpty) {
-            return {
+            final result = {
               'id': tunnelId,
               'name': tunnel['name']?.toString() ?? 'Unnamed Tunnel',
             };
+            LogService().info('Returning tunnel info: $result');
+            return result;
+          } else {
+            // If we can't find the tunnel name but have the ID, return partial info
+            final result = {
+              'id': tunnelId,
+              'name': 'Unknown Tunnel',
+            };
+            LogService().info('Returning partial tunnel info: $result');
+            return result;
           }
         }
       }
+      LogService().info('No valid tunnel found in any service, returning null');
       return null;
-    } catch (e) {
-      _logger.e('Error getting running tunnel info', e);
+    } catch (e, stack) {
+      LogService().error('Error getting running tunnel info: $e');
+      LogService().error('Stack trace: $stack');
       return null;
     }
   }
@@ -405,16 +480,6 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
     }
   }
 
-  Future<bool> isLoggedIn() async {
-    try {
-      ProcessResult result = await Process.run('cloudflared', ['tunnel', 'list'], runInShell: true);
-      return result.exitCode == 0;
-    } catch (e) {
-      _logger.e('Error checking login status: $e');
-      return false;
-    }
-  }
-
   Future<String> getLoginCommand() async {
     try {
       ProcessResult result = await Process.run('cloudflared', ['tunnel', 'login'], runInShell: true);
@@ -525,20 +590,58 @@ ingress:
 
   Future<List<Map<String, String>>> listTunnels() async {
     try {
+      LogService().info('Executing cloudflared tunnel list command...');
       ProcessResult result = await Process.run('cloudflared', ['tunnel', 'list', '--output', 'json'], runInShell: true);
+      
+      LogService().info('Tunnel list command exit code: ${result.exitCode}');
+      LogService().info('Tunnel list stdout: ${result.stdout}');
+      
+      final stderr = result.stderr.toString();
+      if (stderr.isNotEmpty) {
+        LogService().info('Tunnel list stderr: $stderr');
+        
+        // Check for the specific origin certificate error
+        if (stderr.contains('Cannot determine default origin certificate path') ||
+            stderr.contains('Error locating origin cert')) {
+          LogService().error('Cloudflared is not authenticated. Please run cloudflared login first.');
+          throw Exception('Cloudflared authentication required. Please run cloudflared login first.');
+        }
+      }
+
       if (result.exitCode != 0) {
-        _logger.e('Failed to list tunnels: ${result.stderr}');
+        LogService().error('Failed to list tunnels: $stderr');
         return [];
       }
 
-      List<dynamic> tunnels = json.decode(result.stdout.toString());
-      return tunnels.map((tunnel) => {
-        'id': tunnel['id'] as String,
-        'name': tunnel['name'] as String,
-        'url': tunnel['url'] as String? ?? '',
+      final output = result.stdout.toString().trim();
+      if (output.isEmpty) {
+        LogService().info('Tunnel list output is empty');
+        return [];
+      }
+
+      List<dynamic> tunnels = json.decode(output);
+      LogService().info('Parsed ${tunnels.length} tunnels from JSON');
+      
+      final mapped = tunnels.map((tunnel) {
+        final mapped = {
+          'id': tunnel['id'] as String,
+          'name': tunnel['name'] as String,
+          'url': tunnel['url'] as String? ?? '',
+        };
+        LogService().info('Mapped tunnel: $mapped');
+        return mapped;
       }).toList();
-    } catch (e) {
-      _logger.e('Error listing tunnels: $e');
+      
+      LogService().info('Returning ${mapped.length} mapped tunnels');
+      return mapped;
+    } catch (e, stack) {
+      LogService().error('Error listing tunnels: $e');
+      LogService().error('Stack trace: $stack');
+      
+      // If this is an authentication error, rethrow it so we can handle it specially
+      if (e.toString().contains('Cloudflared authentication required')) {
+        rethrow;
+      }
       return [];
     }
   }
@@ -743,14 +846,14 @@ ingress:
 
   Future<List<Map<String, dynamic>>> getRunningWindowsServices() async {
     try {
-      _logger.i('Executing PowerShell command to get services...');
+      LogService().info('Executing PowerShell command to get services...');
       final command = [
         '-Command',
-        r"Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*cloudflared*' }"
-        r" | Select-Object Name,PathName | ConvertTo-Json -Compress"
+        r"Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*cloudflared*' }" +
+        r" | Select-Object @{Name='Name';Expression={$_.Name}},@{Name='PathName';Expression={$_.PathName}} | ConvertTo-Json -Compress"
       ];
       
-      _logger.d('Full command: powershell ${command.join(' ')}');
+      LogService().info('Full command: powershell ${command.join(' ')}');
       
       final result = await Process.run(
         'powershell',
@@ -758,60 +861,51 @@ ingress:
         runInShell: true,
       );
 
-      _logger.i('Command executed. Exit code: ${result.exitCode}');
-      _logger.d('Command stdout: ${result.stdout}');
-      _logger.d('Command stderr: ${result.stderr}');
+      LogService().info('Command executed. Exit code: ${result.exitCode}');
+      final output = result.stdout.toString().trim();
+      LogService().info('Raw output: $output');
 
       if (result.exitCode != 0) {
-        _logger.e('PowerShell command failed with exit code ${result.exitCode}');
+        LogService().error('PowerShell command failed with exit code ${result.exitCode}');
         return [];
       }
 
-      final output = result.stdout.toString().trim();
-      _logger.i('Raw service output (${output.length} chars): ${output.substring(0, min<int>(200, output.length))}...');
-
       if (output.isEmpty) {
-        _logger.w('No cloudflared services found in output');
+        LogService().warning('No cloudflared services found in output');
         return [];
       }
 
       try {
         dynamic decoded = json.decode(output);
+        List<dynamic> services = decoded is List ? decoded : [decoded];
         
-        // Handle both single service (Object) and multiple services (Array)
-        List<dynamic> services = [];
-        if (decoded is List) {
-          services = decoded;
-          _logger.d('Decoded ${services.length} services from JSON array');
-        } else if (decoded is Map) {
-          services = [decoded];
-          _logger.d('Decoded single service from JSON object');
-        } else {
-          _logger.e('Unexpected JSON type: ${decoded.runtimeType}');
-          return [];
-        }
-
-        _logger.i('Successfully parsed ${services.length} cloudflared services');
+        LogService().info('Parsed ${services.length} services');
         
-        return services.map((s) {
-          final path = s['PathName']?.toString().replaceAll('"', '') ?? '';
-          final name = s['Name']?.toString() ?? 'Unnamed Service';
+        final mappedServices = services.map((s) {
+          final pathName = s['PathName']?.toString() ?? '';
+          final name = s['Name']?.toString() ?? '';
           
-          _logger.d('Service details:');
-          _logger.d('  Name: $name');
-          _logger.d('  Path: $path');
+          LogService().info('Processing service:');
+          LogService().info('  Name: $name');
+          LogService().info('  PathName: $pathName');
           
           return {
             'name': name,
-            'path': path,
+            'PathName': pathName, // Changed from 'path' to 'PathName'
           };
         }).toList();
-      } catch (e) {
-        _logger.e('JSON parsing failed for output: $output', e);
+
+        LogService().info('Mapped services: $mappedServices');
+        return mappedServices;
+      } catch (e, stack) {
+        LogService().error('JSON parsing failed: $e');
+        LogService().error('Stack trace: $stack');
+        LogService().error('Raw output that failed to parse: $output');
         return [];
       }
-    } catch (e) {
-      _logger.e('Error getting Windows services', e);
+    } catch (e, stack) {
+      LogService().error('Error getting Windows services: $e');
+      LogService().error('Stack trace: $stack');
       return [];
     }
   }
@@ -826,7 +920,7 @@ ingress:
       final List<Map<String, String>> tunnelInfo = [];
       for (final service in services) {
         _logger.i('3. Processing service: ${service['name']}');
-        final path = service['path'] ?? '';
+        final path = service['PathName'] ?? '';
         
         if (path.isEmpty) {
           _logger.w('4. Skipping service with empty path');
@@ -838,12 +932,12 @@ ingress:
         _logger.d('   Path length: ${path.length} characters');
 
         _logger.i('6. Token extraction attempt...');
-        final tokenMatch = RegExp(r'--token[=\s"'' ]*([^\s''"]+)').firstMatch(path);
+        final tokenMatch = RegExp(r'--token[=\s"'' ]*([^s''"]+)').firstMatch(path);
         
         if (tokenMatch != null) {
           final token = tokenMatch.group(1);
           _logger.i('7. Token found in path');
-          _logger.d('   Raw token: ${token?.substring(0, min<int>(20, token?.length ?? 0))}...');
+          _logger.d('   Raw token: ${token?.substring(0, min<int>(20, token.length ?? 0))}...');
           _logger.d('   Token length: ${token?.length ?? 0} characters');
 
           try {
@@ -857,7 +951,9 @@ ingress:
               _logger.i('11. Found ${tunnels.length} Cloudflare tunnels');
               
               _logger.d('12. Tunnel IDs from Cloudflare:');
-              tunnels.forEach((t) => _logger.d('   - ${t['id']}'));
+              for (var t in tunnels) {
+                _logger.d('   - ${t['id']}');
+              }
 
               final tunnel = tunnels.firstWhere(
                 (t) => t['id'].toString().toLowerCase() == tunnelId.toLowerCase(),
@@ -894,19 +990,29 @@ ingress:
   }
 
   Future<String?> _extractTunnelIdFromToken(String token) async {
-    _logger.d('Decoding token: ${token.substring(0, min<int>(8, token.length))}...');
+    LogService().info('Starting token extraction...');
+    LogService().info('Input token (first 10 chars): ${token.substring(0, min(10, token.length))}...');
+    
     try {
       final cleanedToken = token.trim().replaceAll('"', '');
-      final decodedBytes = base64Url.decode(base64Url.normalize(cleanedToken));
+      LogService().info('Cleaned token (first 10 chars): ${cleanedToken.substring(0, min(10, cleanedToken.length))}...');
+      
+      final normalizedToken = base64Url.normalize(cleanedToken);
+      LogService().info('Normalized token (first 10 chars): ${normalizedToken.substring(0, min(10, normalizedToken.length))}...');
+      
+      final decodedBytes = base64Url.decode(normalizedToken);
       final decodedString = utf8.decode(decodedBytes);
-      _logger.v('Decoded token content: $decodedString');
+      LogService().info('Decoded string: $decodedString');
       
       final jsonPayload = json.decode(decodedString) as Map<String, dynamic>;
+      LogService().info('JSON payload: $jsonPayload');
+      
       final tunnelId = jsonPayload['t']?.toString();
-      _logger.d('Extracted tunnel ID from token: $tunnelId');
+      LogService().info('Extracted tunnel ID: $tunnelId');
       return tunnelId;
-    } catch (e) {
-      _logger.e('Token decoding failed', e);
+    } catch (e, stack) {
+      LogService().error('Token decoding failed: $e');
+      LogService().error('Stack trace: $stack');
       return null;
     }
   }
@@ -1003,6 +1109,25 @@ ingress:
       return true;
     } catch (e) {
       _logger.e('Error installing cloudflared: $e');
+      return false;
+    }
+  }
+
+  // Add a new method to handle the login process
+  Future<bool> initiateLogin() async {
+    try {
+      LogService().info('Initiating cloudflared login process...');
+      ProcessResult result = await Process.run('cloudflared', ['login'], runInShell: true);
+      
+      if (result.exitCode == 0) {
+        LogService().info('Login process initiated successfully');
+        return true;
+      } else {
+        LogService().error('Failed to initiate login: ${result.stderr}');
+        return false;
+      }
+    } catch (e) {
+      LogService().error('Error during login process: $e');
       return false;
     }
   }

@@ -36,15 +36,26 @@ class DatabaseService {
         databaseFactory = databaseFactoryFfi;
       }
 
-      // Determine the path to the database file
-      final Directory appDir = await getApplicationSupportDirectory();
-      final String dbPath = p.join(appDir.path, 'ctmanager.db');
-
-      // Ensure the directory exists
-      final dbDir = Directory(p.dirname(dbPath));
+      // Get the AppData directory for storing the database
+      String appDir;
+      if (Platform.isWindows) {
+        // Get the executable's directory for portable mode
+        appDir = p.dirname(Platform.resolvedExecutable);
+      } else {
+        // Fallback to AppData for other platforms
+        final appDataDir = await getApplicationSupportDirectory();
+        appDir = appDataDir.path;
+      }
+      
+      final dbDir = Directory(p.join(appDir, 'data'));
+      
+      // Create data directory if it doesn't exist
       if (!await dbDir.exists()) {
         await dbDir.create(recursive: true);
       }
+
+      final String dbPath = p.join(dbDir.path, 'ctmanager.db');
+      _logger.i('Using database at: $dbPath');
 
       // Open the database with retry logic
       int retryCount = 0;
@@ -66,7 +77,7 @@ class DatabaseService {
           if (retryCount >= 3) {
             throw Exception('Failed to open database after 3 attempts: $e');
           }
-          await Future.delayed(Duration(seconds: 1));
+          await Future.delayed(const Duration(seconds: 1));
         }
       }
     } catch (e) {
@@ -159,7 +170,7 @@ class DatabaseService {
   }
 
   Future<List<Tunnel>> getSavedTunnels() async {
-    final db = await database;
+    final db = database;
     final List<Map<String, dynamic>> maps = await db.query('tunnels');
     return List.generate(maps.length, (i) => Tunnel.fromMap(maps[i]));
   }
@@ -200,8 +211,17 @@ class DatabaseService {
       await close();
       
       // Get database path
-      final Directory appDir = await getApplicationSupportDirectory();
-      final String dbPath = p.join(appDir.path, 'ctmanager.db');
+      String appDir;
+      if (Platform.isWindows) {
+        // Get the executable's directory for portable mode
+        appDir = p.dirname(Platform.resolvedExecutable);
+      } else {
+        // Fallback to AppData for other platforms
+        final appDataDir = await getApplicationSupportDirectory();
+        appDir = appDataDir.path;
+      }
+      
+      final String dbPath = p.join(appDir, 'data', 'ctmanager.db');
       
       // Delete the database file
       final dbFile = File(dbPath);

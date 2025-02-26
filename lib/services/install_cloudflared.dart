@@ -70,8 +70,17 @@ class InstallCloudflaredService {
       }
 
       // Save the executable to a directory
-      Directory appData = await getApplicationSupportDirectory();
-      String cloudflaredDirPath = p.join(appData.path, 'cloudflared');
+      String appDir;
+      if (Platform.isWindows) {
+        // Get the executable's directory for portable mode
+        appDir = p.dirname(Platform.resolvedExecutable);
+      } else {
+        // Fallback to AppData for other platforms
+        final appDataDir = await getApplicationSupportDirectory();
+        appDir = appDataDir.path;
+      }
+
+      String cloudflaredDirPath = p.join(appDir, 'data', 'cloudflared');
       Directory cloudflaredDir = Directory(cloudflaredDirPath);
       if (!await cloudflaredDir.exists()) {
         await cloudflaredDir.create(recursive: true);
@@ -151,6 +160,93 @@ class InstallCloudflaredService {
       }
     } catch (e) {
       _logger.e('Error updating PATH: $e');
+      return false;
+    }
+  }
+
+  Future<bool> installCloudflared(String token) async {
+    try {
+      final tempDir = await Directory.systemTemp.createTemp('cloudflared_');
+      final client = HttpClient();
+      
+      // First, ensure Visual C++ Redistributable is installed
+      final vcRedisPaths = [
+        'https://aka.ms/vs/17/release/vc_redist.x64.exe',
+        'https://aka.ms/vs/17/release/vc_redist.x86.exe'
+      ];
+
+      for (var vcRedisPath in vcRedisPaths) {
+        final vcRedisFile = '${tempDir.path}\\${vcRedisPath.split('/').last}';
+        
+        // Download VC++ Redistributable
+        final request = await client.getUrl(Uri.parse(vcRedisPath));
+        final response = await request.close();
+        
+        final file = File(vcRedisFile);
+        await response.pipe(file.openWrite());
+        
+        // Install VC++ Redistributable silently
+        final vcRedisResult = await Process.run(
+          vcRedisFile,
+          ['/install', '/quiet', '/norestart'],
+          runInShell: true
+        );
+        
+        if (vcRedisResult.exitCode != 0) {
+          _logger.w('VC++ Redistributable installation returned: ${vcRedisResult.exitCode}');
+        }
+      }
+
+      // Now download and install cloudflared
+      final installerPath = '${tempDir.path}\\cloudflared-windows-amd64.msi';
+      
+      final cloudflaredRequest = await client.getUrl(
+        Uri.parse('https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi')
+      );
+      final cloudflaredResponse = await cloudflaredRequest.close();
+      
+      final installerFile = File(installerPath);
+      await cloudflaredResponse.pipe(installerFile.openWrite());
+      
+      // Run the installer with proper flags to ensure WMI components are installed
+      final installResult = await Process.run(
+        'msiexec',
+        [
+          '/i',
+          installerPath,
+          '/quiet',
+          '/qn',
+          'ADDLOCAL=ALL',  // Install all features
+          'REBOOT=ReallySuppress'  // Prevent reboot
+        ]
+      );
+      
+      if (installResult.exitCode != 0) {
+        _logger.e('Failed to install cloudflared: ${installResult.stderr}');
+        return false;
+      }
+      
+      // Wait for installation to complete
+      await Future.delayed(const Duration(seconds: 5));
+      
+      // Install the service with the provided token
+      final serviceResult = await Process.run(
+        'cloudflared',
+        ['service', 'install', token],
+        runInShell: true
+      );
+      
+      if (serviceResult.exitCode != 0) {
+        _logger.e('Failed to install cloudflared service: ${serviceResult.stderr}');
+        return false;
+      }
+
+      // Clean up temp files
+      await tempDir.delete(recursive: true);
+      
+      return true;
+    } catch (e) {
+      _logger.e('Error installing cloudflared: $e');
       return false;
     }
   }

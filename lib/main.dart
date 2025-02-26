@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:ffi';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/tunnel_provider.dart';
@@ -12,16 +13,35 @@ import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:process/process.dart';
 import 'services/database_service.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite3;
+import 'package:sqlite3/open.dart';
 
 final Logger logger = Logger(
   printer: PrettyPrinter(),
   level: Level.verbose,
 );
+
+Future<bool> checkRequiredDLLs() async {
+  if (!Platform.isWindows) return true;
+  
+  try {
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = Directory(p.dirname(exePath));
+    
+    // Configure sqlite3.dll loading from the root directory
+    open.overrideFor(OperatingSystem.windows, () {
+      return DynamicLibrary.open(p.join(exeDir.path, 'sqlite3.dll'));
+    });
+
+    return true;
+  } catch (e) {
+    logger.e('Error checking DLLs: $e');
+    return false;
+  }
+}
 
 Future<void> initializeApp() async {
   int retryCount = 0;
@@ -32,8 +52,16 @@ Future<void> initializeApp() async {
       // Initialize Flutter bindings
       WidgetsFlutterBinding.ensureInitialized();
 
-      // Initialize sqflite for desktop
-      if (Platform.isWindows || Platform.isLinux) {
+      // Configure SQLite DLL loading
+      if (!await checkRequiredDLLs()) {
+        throw Exception(
+          'Failed to initialize SQLite.\n'
+          'Please make sure sqlite3.dll is present in the dlls folder.'
+        );
+      }
+
+      // Initialize sqflite for Windows
+      if (Platform.isWindows) {
         sqfliteFfiInit();
         databaseFactory = databaseFactoryFfi;
       }

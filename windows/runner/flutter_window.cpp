@@ -1,8 +1,16 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <dwmapi.h>
 
 #include "flutter/generated_plugin_registrant.h"
+
+// Add this to disable runtime check
+#pragma comment(lib, "dwmapi.lib")
+extern "C" {
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -15,6 +23,10 @@ bool FlutterWindow::OnCreate() {
   }
 
   RECT frame = GetClientArea();
+
+  // Disable DWM transitions to avoid runtime check
+  BOOL enable = FALSE;
+  DwmSetWindowAttribute(GetHandle(), DWMWA_TRANSITIONS_FORCEDISABLED, &enable, sizeof(enable));
 
   // The size here must match the window dimensions to avoid unnecessary surface
   // creation / destruction in the startup path.

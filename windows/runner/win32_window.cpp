@@ -5,6 +5,8 @@
 
 #include "resource.h"
 
+#include <iostream>
+
 namespace {
 
 /// Window attribute that enables dark mode window decorations.
@@ -52,6 +54,15 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
   }
   FreeLibrary(user32_module);
 }
+
+// The Windows DPI system is based on this value.
+constexpr int kBaseDpi = 96;
+
+// Disable runtime checks by setting these flags
+constexpr DWORD kWindowExStyle = WS_EX_OVERLAPPEDWINDOW | WS_EX_NOREDIRECTIONBITMAP;
+
+template <class T>
+using enable_if_t = typename std::enable_if<T::value, int>::type;
 
 }  // namespace
 
@@ -112,6 +123,8 @@ void WindowClassRegistrar::UnregisterWindowClass() {
 }
 
 Win32Window::Win32Window() {
+  // Disable Windows DPI scaling to avoid runtime checks
+  SetProcessDPIAware();
   ++g_active_window_count;
 }
 

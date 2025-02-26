@@ -9,6 +9,8 @@ import 'tunnel_list_item.dart';
 import '../services/log_service.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 
 const cloudflareOrange = Color(0xFFF48120);
 const cloudflareBlue = Color(0xFF404242);
@@ -109,12 +111,31 @@ class _HomePageState extends State<HomePage> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        provider.runningTunnel!['name'] ?? 'Unnamed Tunnel',
-                                        style: const TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            provider.runningTunnel!['name'] ?? 'Unnamed Tunnel',
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          if (provider.runningTunnel!['requires_login'] == 'true') ...[
+                                            const SizedBox(width: 8),
+                                            TextButton.icon(
+                                              onPressed: () async {
+                                                await provider.initiateLogin();
+                                                await provider.checkRunningTunnel();
+                                              },
+                                              icon: const Icon(Icons.login, size: 16),
+                                              label: const Text('Login'),
+                                              style: TextButton.styleFrom(
+                                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                                backgroundColor: Colors.grey[100],
+                                              ),
+                                            ),
+                                          ],
+                                        ],
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
@@ -155,6 +176,24 @@ class _HomePageState extends State<HomePage> {
                                             ),
                                             Row(
                                               children: [
+                                                // Export button
+                                                IconButton(
+                                                  icon: Icon(Icons.upload_outlined,
+                                                    color: Theme.of(context).primaryColor,
+                                                    size: 24,
+                                                  ),
+                                                  onPressed: () => _handleExport(context),
+                                                  tooltip: 'Export Tunnels',
+                                                ),
+                                                // Import button
+                                                IconButton(
+                                                  icon: Icon(Icons.download_outlined,
+                                                    color: Theme.of(context).primaryColor,
+                                                    size: 24,
+                                                  ),
+                                                  onPressed: () => _handleImport(context),
+                                                  tooltip: 'Import Tunnels',
+                                                ),
                                                 IconButton(
                                                   icon: Icon(Icons.add_circle_outline, 
                                                     color: Theme.of(context).primaryColor,
@@ -473,7 +512,7 @@ class _HomePageState extends State<HomePage> {
                 if (context.mounted) {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
+                    const SnackBar(
                       content: Text('Tunnel added successfully'),
                     ),
                   );
@@ -495,5 +534,73 @@ class _HomePageState extends State<HomePage> {
         isLocal: tunnel.isLocal,
       ),
     );
+  }
+
+  Future<void> _handleExport(BuildContext context) async {
+    try {
+      final provider = context.read<TunnelProvider>();
+      final jsonData = provider.exportTunnels();
+      
+      // Get the save path from user
+      String? savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Tunnels Configuration',
+        fileName: 'tunnels_config.json',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (savePath != null) {
+        // Ensure .json extension
+        if (!savePath.toLowerCase().endsWith('.json')) {
+          savePath = '$savePath.json';
+        }
+        
+        // Write the JSON data to file
+        await File(savePath).writeAsString(jsonData);
+        
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Tunnels exported successfully')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to export tunnels: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleImport(BuildContext context) async {
+    try {
+      // Get the file path from user
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        allowMultiple: false,
+      );
+
+      if (result != null && result.files.single.path != null) {
+        // Read the JSON data from file
+        final jsonStr = await File(result.files.single.path!).readAsString();
+        
+        // Import the tunnels
+        await context.read<TunnelProvider>().importTunnels(jsonStr);
+        
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Tunnels imported successfully')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to import tunnels: $e')),
+        );
+      }
+    }
   }
 }

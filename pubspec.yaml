@@ -18,12 +18,13 @@ dependencies:
   logger: 1.1.0
   process: ^4.2.4
   url_launcher: ^6.2.4
+  msix: ^3.16.8
+  file_picker: ^6.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^2.0.0
-  msix: ^3.16.7
   flutter_launcher_icons: ^0.13.1
 
 flutter:
@@ -57,3 +58,14 @@ msix_config:
   msix_version: 0.6.0.0
   logo_path: assets/icon.jpg
   capabilities: internetClient
+  certificate_path: CERTIFICATE.pfx
+  certificate_password: 1234567890
+  install_certificate: true
+  store: false  # Set to true if publishing to Microsoft Store
+  dependencies:
+    Microsoft.VCLibs.140.00:
+      path: assets/dependencies/Microsoft.VCLibs.x64.14.00.Desktop.appx
+    Microsoft.VCLibs.140.00.UWPDesktop:
+      path: assets/dependencies/Microsoft.VCLibs.x64.14.00.Desktop.appx
+  execution_alias: ctmanager
+  add_execution_alias: true

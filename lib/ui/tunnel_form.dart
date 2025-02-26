@@ -92,7 +92,7 @@ class _TunnelFormState extends State<TunnelForm> {
               ),
               DropdownButtonFormField<String>(
                 value: _protocol,
-                items: [
+                items: const [
                   DropdownMenuItem(value: 'RDP', child: Text('Remote Desktop')),
                   DropdownMenuItem(value: 'SSH', child: Text('SSH')),
                 ],
@@ -119,6 +119,16 @@ class _TunnelFormState extends State<TunnelForm> {
         ElevatedButton(
           onPressed: () async {
             if (_formKey.currentState!.validate()) {
+              _formKey.currentState!.save();
+              
+              final provider = context.read<TunnelProvider>();
+              final wasRunning = widget.tunnel?.isRunning ?? false;
+              
+              // If tunnel is running, stop it first
+              if (wasRunning) {
+                await provider.stopForwarding(widget.tunnel!.domain);
+              }
+              
               final tunnel = Tunnel(
                 id: widget.tunnel?.id,
                 domain: _domainController.text,
@@ -128,7 +138,12 @@ class _TunnelFormState extends State<TunnelForm> {
               );
               
               // Save tunnel configuration
-              await context.read<TunnelProvider>().saveTunnel(tunnel);
+              await provider.saveTunnel(tunnel);
+              
+              // If it was running before, start it again with new configuration
+              if (wasRunning) {
+                await provider.startForwarding(tunnel.domain, tunnel.port);
+              }
                 
               if (context.mounted) {
                 Navigator.of(context).pop();

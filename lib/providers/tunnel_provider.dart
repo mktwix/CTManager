@@ -7,6 +7,7 @@ import '../services/cloudflared_service.dart';
 import 'package:logger/logger.dart';
 import 'dart:io';
 import '../services/log_service.dart';
+import 'dart:convert';
 
 class TunnelProvider extends ChangeNotifier {
   final CloudflaredService _cfService = CloudflaredService();
@@ -14,7 +15,7 @@ class TunnelProvider extends ChangeNotifier {
   
   bool _isLoading = true;
   Map<String, String>? _runningTunnel;
-  Map<String, String> _forwardingStatus = {};
+  final Map<String, String> _forwardingStatus = {};
   List<Tunnel> _tunnels = [];
   String? _error;
 
@@ -166,7 +167,7 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<void> loadTunnels() async {
     try {
-      final db = await DatabaseService.instance.database;
+      final db = DatabaseService.instance.database;
       final List<Map<String, dynamic>> maps = await db.query('tunnels');
       _tunnels = List.generate(maps.length, (i) {
         return Tunnel.fromJson(maps[i]);
@@ -181,7 +182,19 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<void> saveTunnel(Tunnel tunnel) async {
     try {
-      final db = await DatabaseService.instance.database;
+      final db = DatabaseService.instance.database;
+      
+      // Check if a tunnel with the same domain already exists (excluding the current tunnel being edited)
+      final List<Map<String, dynamic>> existingTunnels = await db.query(
+        'tunnels',
+        where: 'domain = ? AND id != ?',
+        whereArgs: [tunnel.domain, tunnel.id ?? -1],
+      );
+      
+      if (existingTunnels.isNotEmpty) {
+        throw Exception('A tunnel with domain "${tunnel.domain}" already exists');
+      }
+
       final index = _tunnels.indexWhere((t) => t.id == tunnel.id);
       
       if (index >= 0) {
@@ -220,7 +233,7 @@ class TunnelProvider extends ChangeNotifier {
         await stopForwarding(tunnel.domain);
       }
       
-      final db = await DatabaseService.instance.database;
+      final db = DatabaseService.instance.database;
       await db.delete(
         'tunnels',
         where: 'id = ?',
@@ -283,6 +296,88 @@ class TunnelProvider extends ChangeNotifier {
       await saveTunnel(updatedTunnel);
     } catch (e, stack) {
       _error = 'Error stopping tunnel: ${e.toString()}';
+      _logger.e(_error!, e, stack);
+      rethrow;
+    }
+  }
+
+  Future<void> initiateLogin() async {
+    try {
+      await _cfService.initiateLogin();
+    } catch (e) {
+      LogService().error('Failed to initiate login: $e');
+    }
+  }
+
+  // Export tunnels to JSON string
+  String exportTunnels() {
+    try {
+      final List<Map<String, dynamic>> tunnelsJson = _tunnels.map((t) => {
+        'id': t.id,
+        'domain': t.domain,
+        'port': t.port,
+        'protocol': t.protocol,
+        'is_local': t.isLocal ? 1 : 0,
+        'is_running': t.isRunning ? 1 : 0
+      }).toList();
+      return jsonEncode({'tunnels': tunnelsJson});
+    } catch (e, stack) {
+      _error = 'Failed to export tunnels: ${e.toString()}';
+      _logger.e(_error!, e, stack);
+      return '{"error": "${e.toString()}"}';
+    }
+  }
+
+  // Import tunnels from JSON string
+  Future<void> importTunnels(String jsonStr) async {
+    try {
+      // First try to parse the JSON string
+      final Map<String, dynamic> data = jsonDecode(jsonStr);
+      
+      if (data.containsKey('tunnels')) {
+        final List<dynamic> tunnelsJson = data['tunnels'];
+        final List<Tunnel> newTunnels = tunnelsJson.map((t) {
+          // Convert numeric id to string to ensure compatibility
+          final id = t['id']?.toString();
+          
+          // Ensure all required fields are present and in correct format
+          final Map<String, dynamic> tunnelMap = {
+            'id': id != null ? int.tryParse(id) : null,
+            'domain': t['domain']?.toString() ?? '',
+            'port': t['port']?.toString() ?? '',
+            'protocol': t['protocol']?.toString() ?? '',
+            'is_local': t['is_local'] is bool ? (t['is_local'] ? 1 : 0) : (t['is_local'] ?? 0),
+            'is_running': t['is_running'] is bool ? (t['is_running'] ? 1 : 0) : (t['is_running'] ?? 0)
+          };
+          
+          return Tunnel.fromJson(tunnelMap);
+        }).toList();
+
+        // Save all new tunnels to database, skipping duplicates
+        for (var tunnel in newTunnels) {
+          try {
+            // Check if tunnel with this domain already exists
+            final existingTunnel = _tunnels.firstWhere(
+              (t) => t.domain == tunnel.domain,
+              orElse: () => null as Tunnel,
+            );
+            
+            if (existingTunnel == null) {
+              await saveTunnel(tunnel);
+            } else {
+              LogService().info('Skipping import of duplicate tunnel for domain: ${tunnel.domain}');
+            }
+          } catch (e) {
+            LogService().warning('Failed to import tunnel for domain ${tunnel.domain}: ${e.toString()}');
+            continue;
+          }
+        }
+        
+        await loadTunnels(); // Reload tunnels from database
+        notifyListeners();
+      }
+    } catch (e, stack) {
+      _error = 'Failed to import tunnels: ${e.toString()}';
       _logger.e(_error!, e, stack);
       rethrow;
     }
