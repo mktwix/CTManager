@@ -4,13 +4,18 @@ import 'package:flutter/foundation.dart';
 import '../models/tunnel.dart';
 import '../services/database_service.dart';
 import '../services/cloudflared_service.dart';
+import '../services/smb_service.dart';
+import '../services/smb_exceptions.dart';
 import 'package:logger/logger.dart';
 import 'dart:io';
 import '../services/log_service.dart';
 import 'dart:convert';
+import '../ui/drive_letter_dialog.dart';
+import 'package:flutter/material.dart';
 
 class TunnelProvider extends ChangeNotifier {
   final CloudflaredService _cfService = CloudflaredService();
+  final SmbService _smbService = SmbService();
   final Logger _logger = Logger();
   
   bool _isLoading = true;
@@ -42,7 +47,7 @@ class TunnelProvider extends ChangeNotifier {
       await checkRunningTunnel();
     } catch (e, stack) {
       _error = 'Failed to initialize: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Failed to initialize: ${e.toString()}');
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -52,7 +57,6 @@ class TunnelProvider extends ChangeNotifier {
   Future<void> checkRunningTunnel() async {
     try {
       _isLoading = true;
-      notifyListeners();
       
       LogService().info('Checking running tunnel state...');
       LogService().info('Current forwarding status: $_forwardingStatus');
@@ -89,79 +93,165 @@ class TunnelProvider extends ChangeNotifier {
       LogService().info('Running tunnel info: $_runningTunnel');
       
     } catch (e, stack) {
-      _logger.e('Error checking running tunnel', e, stack);
+      _logger.e('Error checking running tunnel: ${e.toString()}');
       LogService().error('Error checking running tunnel: $e');
       LogService().error('Stack trace: $stack');
     } finally {
       _isLoading = false;
-      notifyListeners();
     }
   }
 
-  Future<void> startForwarding(String domain, String port) async {
+  Future<bool> startForwarding(String domain, String port, {BuildContext? context}) async {
     try {
-      LogService().info('Attempting to start forwarding for $domain on port $port');
+      LogService().info('Starting port forwarding for $domain:$port');
       
-      final success = await _cfService.startPortForwarding(domain, port);
-      if (success) {
-        LogService().system('Successfully started forwarding for $domain on port $port');
-        _forwardingStatus[domain] = port;
-        
-        // Update running status of the tunnel
-        final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
-        if (tunnelIndex != -1) {
-          final tunnel = _tunnels[tunnelIndex];
-          final updatedTunnel = tunnel.copyWith(isRunning: true);
-          _tunnels[tunnelIndex] = updatedTunnel;
-          notifyListeners();
-        }
-      } else {
-        LogService().error('Failed to start forwarding for $domain on port $port');
-        _logger.e('Failed to start forwarding for $domain:$port');
+      // Find the tunnel in the list
+      final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
+      if (tunnelIndex == -1) {
+        LogService().error('Tunnel not found for $domain');
+        return false;
       }
-    } catch (e, stack) {
-      LogService().error('Error starting forwarding for $domain on port $port: $e');
-      _logger.e('Failed to start forwarding', e, stack);
-    }
-  }
-
-  Future<void> stopForwarding(String domain) async {
-    try {
-      LogService().info('Attempting to stop forwarding for $domain');
-      LogService().info('Current forwarding status: $_forwardingStatus');
       
-      final port = _forwardingStatus[domain];
-      if (port != null) {
-        LogService().info('Found port $port for domain $domain');
-        
-        // Find the tunnel in the list
-        final tunnel = _tunnels.firstWhere(
-          (t) => t.domain == domain,
-          orElse: () => Tunnel(domain: domain, port: port, protocol: 'tcp', isRunning: false),
-        );
-        LogService().info('Found tunnel in list: ${tunnel.domain}:${tunnel.port} (running: ${tunnel.isRunning})');
-        
-        // Stop the forwarding
-        await _cfService.stopPortForwarding(port);
-        _forwardingStatus.remove(domain);
-        
-        LogService().system('Successfully stopped forwarding for $domain');
-        LogService().info('Updated forwarding status: $_forwardingStatus');
-        
-        // Update tunnel state
-        final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
-        if (tunnelIndex != -1) {
-          final updatedTunnel = tunnel.copyWith(isRunning: false);
-          _tunnels[tunnelIndex] = updatedTunnel;
-          LogService().info('Updated tunnel state: ${updatedTunnel.domain}:${updatedTunnel.port} (running: ${updatedTunnel.isRunning})');
-          notifyListeners();
-        }
-      } else {
-        LogService().warning('No port found for domain $domain in forwarding status');
+      final tunnel = _tunnels[tunnelIndex];
+      
+      // Start the cloudflared tunnel
+      final success = await _cfService.startTunnel(tunnel);
+      if (!success) {
+        LogService().error('Failed to start cloudflared tunnel for $domain:$port');
+        return false;
       }
+      
+      // Update the forwarding status immediately 
+      _forwardingStatus[domain] = port;
+      
+      // Update the tunnel status
+      final updatedTunnel = tunnel.copyWith(isRunning: true);
+      _tunnels[tunnelIndex] = updatedTunnel;
+      await DatabaseService.instance.updateTunnel(updatedTunnel);
+      
+      // If this is an SMB tunnel, mount it as a network drive
+      if (tunnel.protocol == 'SMB') {
+        try {
+          String? selectedDriveLetter;
+          
+          // If the tunnel has auto-select disabled and a preferred drive letter is set,
+          // use that drive letter
+          if (!tunnel.autoSelectDrive && tunnel.preferredDriveLetter != null) {
+            // Check if the preferred drive letter is available
+            final availableDriveLetters = await _smbService.getAvailableDriveLetters();
+            if (availableDriveLetters.contains(tunnel.preferredDriveLetter)) {
+              selectedDriveLetter = tunnel.preferredDriveLetter;
+              LogService().info('Using preferred drive letter: $selectedDriveLetter');
+            } else {
+              // Preferred drive letter is not available, show a warning and fall back to auto-select
+              LogService().warning('Preferred drive letter ${tunnel.preferredDriveLetter} is not available, falling back to auto-select');
+              if (context != null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Preferred drive letter ${tunnel.preferredDriveLetter} is not available, using auto-select instead'),
+                    duration: const Duration(seconds: 5),
+                  ),
+                );
+              }
+            }
+          }
+          
+          // Show drive letter selection dialog if context is provided and no drive letter is selected yet
+          // and auto-select is not enabled
+          if (selectedDriveLetter == null && context != null && !tunnel.autoSelectDrive) {
+            selectedDriveLetter = await showDialog<String>(
+              context: context,
+              builder: (context) => DriveLetterDialog(domain: domain),
+            );
+          }
+          
+          // If no drive letter was selected (auto-select or dialog was cancelled),
+          // find an available drive letter automatically
+          if (selectedDriveLetter == null) {
+            selectedDriveLetter = await _smbService.findAvailableDriveLetter();
+          }
+          
+          if (selectedDriveLetter.isEmpty) {
+            LogService().error('No available drive letters for mounting SMB share');
+            // Continue anyway, as the tunnel is still running
+          } else {
+            // Mount the SMB share
+            LogService().info('About to mount SMB share for $domain:$port');
+            final mounted = await _smbService.mountSmbShare(tunnel, selectedDriveLetter);
+            LogService().info('SMB mount process initiated: $mounted for $domain:$port');
+            
+            // Immediately update connection status without waiting for verification
+            LogService().info('Forcing connection status update for $domain:$port');
+            await _cfService.checkSmbMountStatus(domain, port);
+            
+            // Log drive mount status
+            final driveMounted = _smbService.isDomainMounted(domain);
+            LogService().info('Drive mounting in progress: $driveMounted for $domain at $selectedDriveLetter:');
+          }
+        } catch (e) {
+          // Log but don't fail if mounting has issues
+          LogService().error('Error during SMB mounting process: $e');
+          // Continue anyway - the tunnel may still be functional
+        }
+      }
+      
+      // Do a final check of running tunnel state
+      checkRunningTunnel();
+      
+      // Return true to indicate the forwarding process was started
+      return true;
     } catch (e, stack) {
-      LogService().error('Error stopping forwarding for $domain: $e');
+      _logger.e('Error starting forwarding: ${e.toString()}');
+      LogService().error('Error starting forwarding: $e');
       LogService().error('Stack trace: $stack');
+      return false;
+    }
+  }
+
+  Future<bool> stopForwarding(String domain) async {
+    try {
+      LogService().info('Stopping forwarding for $domain');
+      
+      // Find the tunnel by domain
+      final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
+      if (tunnelIndex == -1) {
+        LogService().error('Tunnel not found for domain: $domain');
+        return false;
+      }
+      
+      final tunnel = _tunnels[tunnelIndex];
+      
+      // If this is an SMB tunnel and it's mounted, unmount it first
+      if (tunnel.protocol == 'SMB' && _smbService.isDomainMounted(domain)) {
+        final unmounted = await _smbService.unmountDrive(domain);
+        if (!unmounted) {
+          LogService().error('Failed to unmount drive for $domain');
+          // Continue anyway to stop the tunnel
+        } else {
+          LogService().info('Drive unmounted successfully for $domain');
+        }
+      }
+      
+      // Stop the cloudflared tunnel
+      final success = await _cfService.stopTunnel(tunnel);
+      if (!success) {
+        LogService().error('Failed to stop cloudflared tunnel for $domain');
+        return false;
+      }
+      
+      // Update the forwarding status
+      _forwardingStatus.remove(domain);
+      
+      // Update the tunnel state
+      final updatedTunnel = tunnel.copyWith(isRunning: false);
+      _tunnels[tunnelIndex] = updatedTunnel;
+      await DatabaseService.instance.updateTunnel(updatedTunnel);
+      
+      return true;
+    } catch (e, stack) {
+      _logger.e('Error stopping forwarding: ${e.toString()}');
+      LogService().error('Error stopping forwarding: $e');
+      return false;
     }
   }
 
@@ -175,7 +265,7 @@ class TunnelProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e, stack) {
       _error = 'Failed to load tunnels: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Failed to load tunnels: ${e.toString()}');
       rethrow;
     }
   }
@@ -215,10 +305,11 @@ class TunnelProvider extends ChangeNotifier {
         _tunnels.add(tunnel.copyWith(id: id));
       }
       
-      notifyListeners();
+      // Removed automatic UI refresh when saving tunnels
+      // notifyListeners();
     } catch (e, stack) {
       _error = 'Failed to save tunnel: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Failed to save tunnel: ${e.toString()}');
       rethrow;
     }
   }
@@ -240,10 +331,12 @@ class TunnelProvider extends ChangeNotifier {
         whereArgs: [id],
       );
       _tunnels.removeWhere((t) => t.id == id);
-      notifyListeners();
+      
+      // Removed automatic UI refresh when deleting tunnels
+      // notifyListeners();
     } catch (e, stack) {
       _error = 'Failed to delete tunnel: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Failed to delete tunnel: ${e.toString()}');
       rethrow;
     }
   }
@@ -283,7 +376,7 @@ class TunnelProvider extends ChangeNotifier {
       }
     } catch (e, stack) {
       _error = 'Error starting tunnel: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Error starting tunnel: ${e.toString()}');
       rethrow;
     }
   }
@@ -296,7 +389,7 @@ class TunnelProvider extends ChangeNotifier {
       await saveTunnel(updatedTunnel);
     } catch (e, stack) {
       _error = 'Error stopping tunnel: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Error stopping tunnel: ${e.toString()}');
       rethrow;
     }
   }
@@ -323,7 +416,7 @@ class TunnelProvider extends ChangeNotifier {
       return jsonEncode({'tunnels': tunnelsJson});
     } catch (e, stack) {
       _error = 'Failed to export tunnels: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Failed to export tunnels: ${e.toString()}');
       return '{"error": "${e.toString()}"}';
     }
   }
@@ -374,11 +467,12 @@ class TunnelProvider extends ChangeNotifier {
         }
         
         await loadTunnels(); // Reload tunnels from database
-        notifyListeners();
+        // Removed automatic UI refresh when importing tunnels
+        // notifyListeners();
       }
     } catch (e, stack) {
       _error = 'Failed to import tunnels: ${e.toString()}';
-      _logger.e(_error!, e, stack);
+      _logger.e('Failed to import tunnels: ${e.toString()}');
       rethrow;
     }
   }
@@ -399,7 +493,7 @@ class TunnelProvider extends ChangeNotifier {
       // Close database connection
       await DatabaseService.instance.close();
     } catch (e, stack) {
-      _logger.e('Error during cleanup', e, stack);
+      _logger.e('Error during cleanup: ${e.toString()}');
     }
   }
 }

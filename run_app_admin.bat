@@ -1,0 +1,3 @@
+@echo off
+echo Running Flutter app as administrator...
+powershell -Command "Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd \"%cd%\"; flutter run -d windows' -Verb RunAs" 

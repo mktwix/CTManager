@@ -7,6 +7,11 @@ class Tunnel {
   final String protocol;
   bool isRunning;
   final bool isLocal;
+  final String? username;
+  final String? password;
+  final bool saveCredentials;
+  final String? preferredDriveLetter;
+  final bool autoSelectDrive;
 
   Tunnel({
     this.id,
@@ -15,6 +20,11 @@ class Tunnel {
     required this.protocol,
     this.isRunning = false,
     this.isLocal = false,
+    this.username,
+    this.password,
+    this.saveCredentials = false,
+    this.preferredDriveLetter,
+    this.autoSelectDrive = true,
   });
 
   String get launchCommand {
@@ -22,6 +32,9 @@ class Tunnel {
       return 'mstsc /v:localhost:$port';
     } else if (protocol == 'SSH') {
       return 'ssh localhost -p $port';
+    } else if (protocol == 'SMB') {
+      // SMB doesn't have a direct launch command as it will be mounted as a network drive
+      return '';
     }
     return '';
   }
@@ -34,6 +47,11 @@ class Tunnel {
       'protocol': protocol,
       'is_local': isLocal ? 1 : 0,
       'is_running': isRunning ? 1 : 0,
+      'username': username,
+      'password': password,
+      'save_credentials': saveCredentials ? 1 : 0,
+      'preferred_drive_letter': preferredDriveLetter,
+      'auto_select_drive': autoSelectDrive ? 1 : 0,
     };
   }
 
@@ -45,6 +63,11 @@ class Tunnel {
       protocol: map['protocol'],
       isLocal: map['is_local'] == 1,
       isRunning: map['is_running'] == 1,
+      username: map['username'],
+      password: map['password'],
+      saveCredentials: map['save_credentials'] == 1,
+      preferredDriveLetter: map['preferred_drive_letter'],
+      autoSelectDrive: map['auto_select_drive'] == 1,
     );
   }
 
@@ -55,6 +78,11 @@ class Tunnel {
         protocol: json['protocol'] as String,
         isLocal: json['is_local'] == 1 || json['isLocal'] == true,
         isRunning: json['is_running'] == 1 || json['isRunning'] == true,
+        username: json['username'] as String?,
+        password: json['password'] as String?,
+        saveCredentials: json['save_credentials'] == 1 || json['saveCredentials'] == true,
+        preferredDriveLetter: json['preferred_drive_letter'] as String?,
+        autoSelectDrive: json['auto_select_drive'] == 1 || json['autoSelectDrive'] == true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -64,6 +92,11 @@ class Tunnel {
         'protocol': protocol,
         'is_local': isLocal ? 1 : 0,
         'is_running': isRunning ? 1 : 0,
+        'username': username,
+        'password': password,
+        'save_credentials': saveCredentials ? 1 : 0,
+        'preferred_drive_letter': preferredDriveLetter,
+        'auto_select_drive': autoSelectDrive ? 1 : 0,
       };
 
   Tunnel copyWith({
@@ -73,6 +106,11 @@ class Tunnel {
     String? protocol,
     bool? isLocal,
     bool? isRunning,
+    String? username,
+    String? password,
+    bool? saveCredentials,
+    String? preferredDriveLetter,
+    bool? autoSelectDrive,
   }) {
     return Tunnel(
       id: id ?? this.id,
@@ -81,6 +119,11 @@ class Tunnel {
       protocol: protocol ?? this.protocol,
       isLocal: isLocal ?? this.isLocal,
       isRunning: isRunning ?? this.isRunning,
+      username: username ?? this.username,
+      password: password ?? this.password,
+      saveCredentials: saveCredentials ?? this.saveCredentials,
+      preferredDriveLetter: preferredDriveLetter ?? this.preferredDriveLetter,
+      autoSelectDrive: autoSelectDrive ?? this.autoSelectDrive,
     );
   }
 }

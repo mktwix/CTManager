@@ -3,100 +3,85 @@ import 'package:flutter/material.dart';
 import '../models/tunnel.dart';
 import '../providers/tunnel_provider.dart';
 import 'tunnel_form.dart';
+import '../services/smb_service.dart';
+import 'dart:io';
+import '../main.dart';  // Import main.dart to access the color definitions
 
 class TunnelListItem extends StatelessWidget {
   final Tunnel tunnel;
+  final VoidCallback onToggle;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback onLaunch;
 
   const TunnelListItem({
     super.key,
     required this.tunnel,
+    required this.onToggle,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onLaunch,
   });
 
   @override
   Widget build(BuildContext context) {
+    final smbService = SmbService();
+    final driveLetter = tunnel.protocol == 'SMB' && tunnel.isRunning 
+        ? smbService.getDriveLetterForDomain(tunnel.domain) 
+        : null;
+
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
+      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
       child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-        title: Text(
-          tunnel.domain,
-          style: const TextStyle(fontSize: 14),
-        ),
-        subtitle: Text(
-          '${tunnel.protocol} - Port ${tunnel.port}',
-          style: const TextStyle(fontSize: 12),
+        title: Text(tunnel.domain),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${tunnel.protocol} - Port: ${tunnel.port}'),
+            if (tunnel.protocol == 'SMB' && driveLetter != null)
+              Text('Mounted as $driveLetter:', style: const TextStyle(fontWeight: FontWeight.bold)),
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Start/Stop button
+            // Toggle button
             IconButton(
               icon: Icon(
-                tunnel.isRunning ? Icons.stop : Icons.play_arrow,
+                tunnel.isRunning ? Icons.stop_circle : Icons.play_circle,
                 color: tunnel.isRunning ? Colors.red : Colors.green,
-                size: 20,
               ),
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.all(8),
-              onPressed: () {
-                final provider = context.read<TunnelProvider>();
-                if (tunnel.isRunning) {
-                  provider.stopForwarding(tunnel.domain);
-                } else {
-                  provider.startForwarding(tunnel.domain, tunnel.port);
-                }
-              },
+              onPressed: onToggle,
+              tooltip: tunnel.isRunning ? 'Stop' : 'Start',
             ),
-            // Open button
-            IconButton(
-              icon: const Icon(Icons.open_in_new, size: 20),
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.all(8),
-              onPressed: () {
-                context.read<TunnelProvider>().launchConnection(tunnel);
-              },
-            ),
+            // Launch button (only for running tunnels and non-SMB protocols)
+            if (tunnel.isRunning && tunnel.protocol != 'SMB')
+              IconButton(
+                icon: const Icon(Icons.launch, color: cloudflareBlue),
+                onPressed: onLaunch,
+                tooltip: 'Launch',
+              ),
+            // Open Explorer button (only for running SMB tunnels)
+            if (tunnel.isRunning && tunnel.protocol == 'SMB' && driveLetter != null)
+              IconButton(
+                icon: const Icon(Icons.folder_open, color: cloudflareBlue),
+                onPressed: () {
+                  // Open Windows Explorer to the mounted drive
+                  Process.run('explorer.exe', ['$driveLetter:'], runInShell: true);
+                },
+                tooltip: 'Open in Explorer',
+              ),
             // Edit button
             IconButton(
-              icon: const Icon(Icons.edit, size: 20),
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.all(8),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => TunnelForm(tunnel: tunnel),
-                );
-              },
+              icon: const Icon(Icons.edit, color: cloudflareOrange),
+              onPressed: onEdit,
+              tooltip: 'Edit',
             ),
             // Delete button
             IconButton(
-              icon: const Icon(Icons.delete, size: 20),
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.all(8),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Delete Tunnel'),
-                    content: Text('Are you sure you want to delete ${tunnel.domain}?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          context.read<TunnelProvider>().deleteTunnel(tunnel.id!);
-                          Navigator.pop(context);
-                        },
-                        child: const Text('Delete', style: TextStyle(color: Colors.red)),
-                      ),
-                    ],
-                  ),
-                );
-              },
+              icon: const Icon(Icons.delete, color: Colors.red),
+              onPressed: onDelete,
+              tooltip: 'Delete',
             ),
           ],
         ),

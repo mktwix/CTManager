@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/log_service.dart';
+import '../main.dart';  // Import main.dart to access the color definitions
 
 class LogsPage extends StatefulWidget {
   const LogsPage({Key? key}) : super(key: key);
@@ -120,13 +121,11 @@ class _LogsPageState extends State<LogsPage> {
       case LogCategory.error:
         return Colors.red;
       case LogCategory.warning:
-        return Colors.orange;
+        return cloudflareOrange;
       case LogCategory.info:
-        return Colors.blue;
-      case LogCategory.system:
-        return Colors.purple;
-      case LogCategory.network:
-        return Colors.green;
+        return cloudflareBlue;
+      default:
+        return cloudflareBlue;
     }
   }
 } 

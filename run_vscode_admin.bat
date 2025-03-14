@@ -1,0 +1,3 @@
+@echo off
+echo Running VS Code as administrator...
+powershell -Command "Start-Process 'C:\Program Files\Microsoft VS Code\Code.exe' -ArgumentList '%cd%' -Verb RunAs" 

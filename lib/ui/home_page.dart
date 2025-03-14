@@ -11,9 +11,14 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
+import '../ui/smb_auth_dialog.dart';
+import '../services/smb_service.dart';
+import '../services/smb_exceptions.dart';
+import '../main.dart';  // Import main.dart to access the color definitions
 
-const cloudflareOrange = Color(0xFFF48120);
-const cloudflareBlue = Color(0xFF404242);
+// Using colors defined in main.dart
+// const cloudflareOrange = Color(0xFFF48120);
+// const cloudflareBlue = Color(0xFF404242);
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -37,6 +42,7 @@ class _HomePageState extends State<HomePage> {
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh UI and check tunnel status',
                 onPressed: () => provider.checkRunningTunnel(),
               ),
             ],
@@ -216,9 +222,7 @@ class _HomePageState extends State<HomePage> {
                                                         ),
                                                         onPressed: () {
                                                           for (var tunnel in provider.tunnels) {
-                                                            if (!tunnel.isRunning) {
-                                                              provider.startForwarding(tunnel.domain, tunnel.port);
-                                                            }
+                                                            _toggleTunnel(tunnel);
                                                           }
                                                         },
                                                         tooltip: 'Start All',
@@ -229,9 +233,7 @@ class _HomePageState extends State<HomePage> {
                                                         ),
                                                         onPressed: () {
                                                           for (var tunnel in provider.tunnels) {
-                                                            if (tunnel.isRunning) {
-                                                              provider.stopForwarding(tunnel.domain);
-                                                            }
+                                                            _toggleTunnel(tunnel);
                                                           }
                                                         },
                                                         tooltip: 'Stop All',
@@ -272,6 +274,10 @@ class _HomePageState extends State<HomePage> {
                                                     final tunnel = provider.tunnels[index];
                                                     return TunnelListItem(
                                                       tunnel: tunnel,
+                                                      onToggle: () => _toggleTunnel(tunnel),
+                                                      onEdit: () => _showEditDialog(context, tunnel),
+                                                      onDelete: () => _showDeleteDialog(context, tunnel),
+                                                      onLaunch: () => provider.launchConnection(tunnel),
                                                     );
                                                   },
                                                 ),
@@ -423,7 +429,7 @@ class _HomePageState extends State<HomePage> {
     final formKey = GlobalKey<FormState>();
     String domain = '';
     String port = '';
-    String protocol = '';
+    String protocol = 'RDP';
 
     showDialog(
       context: context,
@@ -469,16 +475,17 @@ class _HomePageState extends State<HomePage> {
                 decoration: const InputDecoration(
                   labelText: 'Protocol',
                 ),
-                value: protocol.isEmpty ? 'RDP' : protocol,
+                value: protocol,
                 items: const [
                   DropdownMenuItem(value: 'RDP', child: Text('Remote Desktop')),
                   DropdownMenuItem(value: 'SSH', child: Text('SSH')),
+                  DropdownMenuItem(value: 'SMB', child: Text('SMB File Share')),
                 ],
                 onChanged: (value) {
                   protocol = value!;
                   // Update port to default value based on protocol
-                  if (port.isEmpty || port == '3389' || port == '22') {
-                    port = value == 'RDP' ? '3389' : '22';
+                  if (port.isEmpty || port == '3389' || port == '22' || port == '445') {
+                    port = value == 'RDP' ? '3389' : (value == 'SSH' ? '22' : '445');
                   }
                 },
                 validator: (value) {
@@ -532,6 +539,29 @@ class _HomePageState extends State<HomePage> {
       builder: (context) => TunnelForm(
         tunnel: tunnel,
         isLocal: tunnel.isLocal,
+      ),
+    );
+  }
+
+  void _showDeleteDialog(BuildContext context, Tunnel tunnel) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Tunnel'),
+        content: Text('Are you sure you want to delete ${tunnel.domain}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              context.read<TunnelProvider>().deleteTunnel(tunnel.id!);
+              Navigator.pop(context);
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }
@@ -599,6 +629,78 @@ class _HomePageState extends State<HomePage> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to import tunnels: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleTunnel(Tunnel tunnel) async {
+    final provider = context.read<TunnelProvider>();
+    
+    if (tunnel.isRunning) {
+      // Stop the tunnel
+      await provider.stopForwarding(tunnel.domain);
+    } else {
+      try {
+        // For SMB tunnels, show authentication dialog if needed
+        if (tunnel.protocol == 'SMB') {
+          // If credentials are not saved or not provided, show auth dialog
+          if (!tunnel.saveCredentials || tunnel.username == null || tunnel.password == null) {
+            final updatedTunnel = await showDialog<Tunnel>(
+              context: context,
+              barrierDismissible: false,
+              builder: (context) => SmbAuthDialog(tunnel: tunnel),
+            );
+            
+            // If dialog was cancelled, return
+            if (updatedTunnel == null) return;
+            
+            // Save the updated tunnel with credentials
+            await provider.saveTunnel(updatedTunnel);
+            
+            // Start the tunnel with the updated credentials
+            await provider.startForwarding(updatedTunnel.domain, updatedTunnel.port, context: context);
+          } else {
+            // Start the tunnel with existing credentials
+            await provider.startForwarding(tunnel.domain, tunnel.port, context: context);
+          }
+        } else {
+          // Start non-SMB tunnel normally
+          await provider.startForwarding(tunnel.domain, tunnel.port);
+        }
+      } on WinFspNotInstalledException catch (e) {
+        if (!mounted) return;
+        
+        // Show dialog with installation instructions
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Text('WinFsp Required'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(e.toString()),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () async {
+                    final url = Uri.parse('https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi');
+                    if (await canLaunchUrl(url)) {
+                      await launchUrl(url);
+                    }
+                  },
+                  child: const Text('Download WinFsp Manually'),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
         );
       }
     }
