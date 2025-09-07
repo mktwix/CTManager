@@ -1,17 +1,17 @@
 // lib/providers/tunnel_provider.dart
-
-import 'package:flutter/foundation.dart';
-import '../models/tunnel.dart';
-import '../services/database_service.dart';
-import '../services/cloudflared_service.dart';
-import '../services/smb_service.dart';
-import '../services/smb_exceptions.dart';
-import 'package:logger/logger.dart';
-import 'dart:io';
-import '../services/log_service.dart';
+import 'dart:collection';
 import 'dart:convert';
-import '../ui/drive_letter_dialog.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
+
+import '../models/tunnel.dart';
+import '../services/cloudflared_service.dart';
+import '../services/database_service.dart';
+import '../services/log_service.dart';
+import '../services/smb_service.dart';
+import '../ui/drive_letter_dialog.dart';
 
 class TunnelProvider extends ChangeNotifier {
   final CloudflaredService _cfService = CloudflaredService();
@@ -23,12 +23,14 @@ class TunnelProvider extends ChangeNotifier {
   final Map<String, String> _forwardingStatus = {};
   List<Tunnel> _tunnels = [];
   String? _error;
+  final Set<String> _processingTunnels = {};
 
   bool get isLoading => _isLoading;
   Map<String, String>? get runningTunnel => _runningTunnel;
   Map<String, String> get forwardingStatus => _forwardingStatus;
   List<Tunnel> get tunnels => _tunnels;
   String? get error => _error;
+  UnmodifiableSetView<String> get processingTunnels => UnmodifiableSetView(_processingTunnels);
 
   TunnelProvider() {
     _initialize();
@@ -45,7 +47,7 @@ class TunnelProvider extends ChangeNotifier {
 
       // Get running tunnel processes and update states
       await checkRunningTunnel();
-    } catch (e, stack) {
+    } catch (e) {
       _error = 'Failed to initialize: ${e.toString()}';
       _logger.e('Failed to initialize: ${e.toString()}');
     } finally {
@@ -56,7 +58,8 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<void> checkRunningTunnel() async {
     try {
-      _isLoading = true;
+      // _isLoading = true;
+      // notifyListeners();
       
       LogService().info('Checking running tunnel state...');
       LogService().info('Current forwarding status: $_forwardingStatus');
@@ -97,11 +100,14 @@ class TunnelProvider extends ChangeNotifier {
       LogService().error('Error checking running tunnel: $e');
       LogService().error('Stack trace: $stack');
     } finally {
-      _isLoading = false;
+      // _isLoading = false;
+      // notifyListeners();
     }
   }
 
   Future<bool> startForwarding(String domain, String port, {BuildContext? context}) async {
+    _processingTunnels.add(domain);
+    notifyListeners();
     try {
       LogService().info('Starting port forwarding for $domain:$port');
       
@@ -126,8 +132,7 @@ class TunnelProvider extends ChangeNotifier {
       
       // Update the tunnel status
       final updatedTunnel = tunnel.copyWith(isRunning: true);
-      _tunnels[tunnelIndex] = updatedTunnel;
-      await DatabaseService.instance.updateTunnel(updatedTunnel);
+      await saveTunnel(updatedTunnel);
       
       // If this is an SMB tunnel, mount it as a network drive
       if (tunnel.protocol == 'SMB') {
@@ -167,9 +172,7 @@ class TunnelProvider extends ChangeNotifier {
           
           // If no drive letter was selected (auto-select or dialog was cancelled),
           // find an available drive letter automatically
-          if (selectedDriveLetter == null) {
-            selectedDriveLetter = await _smbService.findAvailableDriveLetter();
-          }
+          selectedDriveLetter ??= await _smbService.findAvailableDriveLetter();
           
           if (selectedDriveLetter.isEmpty) {
             LogService().error('No available drive letters for mounting SMB share');
@@ -196,7 +199,7 @@ class TunnelProvider extends ChangeNotifier {
       }
       
       // Do a final check of running tunnel state
-      checkRunningTunnel();
+      await checkRunningTunnel();
       
       // Return true to indicate the forwarding process was started
       return true;
@@ -205,10 +208,15 @@ class TunnelProvider extends ChangeNotifier {
       LogService().error('Error starting forwarding: $e');
       LogService().error('Stack trace: $stack');
       return false;
+    } finally {
+      _processingTunnels.remove(domain);
+      notifyListeners();
     }
   }
 
   Future<bool> stopForwarding(String domain) async {
+    _processingTunnels.add(domain);
+    notifyListeners();
     try {
       LogService().info('Stopping forwarding for $domain');
       
@@ -244,14 +252,16 @@ class TunnelProvider extends ChangeNotifier {
       
       // Update the tunnel state
       final updatedTunnel = tunnel.copyWith(isRunning: false);
-      _tunnels[tunnelIndex] = updatedTunnel;
-      await DatabaseService.instance.updateTunnel(updatedTunnel);
+      await saveTunnel(updatedTunnel);
       
       return true;
-    } catch (e, stack) {
+    } catch (e) {
       _logger.e('Error stopping forwarding: ${e.toString()}');
       LogService().error('Error stopping forwarding: $e');
       return false;
+    } finally {
+      _processingTunnels.remove(domain);
+      notifyListeners();
     }
   }
 
@@ -263,7 +273,7 @@ class TunnelProvider extends ChangeNotifier {
         return Tunnel.fromJson(maps[i]);
       });
       notifyListeners();
-    } catch (e, stack) {
+    } catch (e) {
       _error = 'Failed to load tunnels: ${e.toString()}';
       _logger.e('Failed to load tunnels: ${e.toString()}');
       rethrow;
@@ -306,8 +316,8 @@ class TunnelProvider extends ChangeNotifier {
       }
       
       // Removed automatic UI refresh when saving tunnels
-      // notifyListeners();
-    } catch (e, stack) {
+      notifyListeners();
+    } catch (e) {
       _error = 'Failed to save tunnel: ${e.toString()}';
       _logger.e('Failed to save tunnel: ${e.toString()}');
       rethrow;
@@ -333,8 +343,8 @@ class TunnelProvider extends ChangeNotifier {
       _tunnels.removeWhere((t) => t.id == id);
       
       // Removed automatic UI refresh when deleting tunnels
-      // notifyListeners();
-    } catch (e, stack) {
+      notifyListeners();
+    } catch (e) {
       _error = 'Failed to delete tunnel: ${e.toString()}';
       _logger.e('Failed to delete tunnel: ${e.toString()}');
       rethrow;
@@ -374,7 +384,7 @@ class TunnelProvider extends ChangeNotifier {
         _error = 'Failed to start tunnel';
         notifyListeners();
       }
-    } catch (e, stack) {
+    } catch (e) {
       _error = 'Error starting tunnel: ${e.toString()}';
       _logger.e('Error starting tunnel: ${e.toString()}');
       rethrow;
@@ -387,7 +397,7 @@ class TunnelProvider extends ChangeNotifier {
       await _cfService.stopPortForwarding(tunnel.port);
       final updatedTunnel = tunnel.copyWith(isRunning: false);
       await saveTunnel(updatedTunnel);
-    } catch (e, stack) {
+    } catch (e) {
       _error = 'Error stopping tunnel: ${e.toString()}';
       _logger.e('Error stopping tunnel: ${e.toString()}');
       rethrow;
@@ -414,7 +424,7 @@ class TunnelProvider extends ChangeNotifier {
         'is_running': t.isRunning ? 1 : 0
       }).toList();
       return jsonEncode({'tunnels': tunnelsJson});
-    } catch (e, stack) {
+    } catch (e) {
       _error = 'Failed to export tunnels: ${e.toString()}';
       _logger.e('Failed to export tunnels: ${e.toString()}');
       return '{"error": "${e.toString()}"}';
@@ -450,17 +460,16 @@ class TunnelProvider extends ChangeNotifier {
         for (var tunnel in newTunnels) {
           try {
             // Check if tunnel with this domain already exists
-            final existingTunnel = _tunnels.firstWhere(
+            final existingTunnel = _tunnels.where(
               (t) => t.domain == tunnel.domain,
-              orElse: () => null as Tunnel,
-            );
+            ).isNotEmpty;
             
-            if (existingTunnel == null) {
-              await saveTunnel(tunnel);
-            } else {
+            if (existingTunnel) {
               LogService().info('Skipping import of duplicate tunnel for domain: ${tunnel.domain}');
+            } else {
+              await saveTunnel(tunnel);
             }
-          } catch (e) {
+                    } catch (e) {
             LogService().warning('Failed to import tunnel for domain ${tunnel.domain}: ${e.toString()}');
             continue;
           }
@@ -470,7 +479,7 @@ class TunnelProvider extends ChangeNotifier {
         // Removed automatic UI refresh when importing tunnels
         // notifyListeners();
       }
-    } catch (e, stack) {
+    } catch (e) {
       _error = 'Failed to import tunnels: ${e.toString()}';
       _logger.e('Failed to import tunnels: ${e.toString()}');
       rethrow;
@@ -492,7 +501,7 @@ class TunnelProvider extends ChangeNotifier {
       
       // Close database connection
       await DatabaseService.instance.close();
-    } catch (e, stack) {
+    } catch (e) {
       _logger.e('Error during cleanup: ${e.toString()}');
     }
   }

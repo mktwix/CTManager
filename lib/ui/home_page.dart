@@ -12,7 +12,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import '../ui/smb_auth_dialog.dart';
-import '../services/smb_service.dart';
 import '../services/smb_exceptions.dart';
 import '../main.dart';  // Import main.dart to access the color definitions
 
@@ -21,7 +20,7 @@ import '../main.dart';  // Import main.dart to access the color definitions
 // const cloudflareBlue = Color(0xFF404242);
 
 class HomePage extends StatefulWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -29,6 +28,20 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   LogCategory? _selectedCategory;
+  bool _isInitialLoad = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isInitialLoad) {
+      final provider = Provider.of<TunnelProvider>(context, listen: false);
+      if (!provider.isLoading) {
+        setState(() {
+          _isInitialLoad = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,7 +60,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
-          body: provider.isLoading
+          body: _isInitialLoad && provider.isLoading
               ? const Center(child: CircularProgressIndicator())
               : provider.runningTunnel == null
                   ? Center(
@@ -103,7 +116,7 @@ class _HomePageState extends State<HomePage> {
                                 Container(
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
-                                    color: Theme.of(context).primaryColor.withOpacity(0.1),
+                                    color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Icon(
@@ -475,7 +488,7 @@ class _HomePageState extends State<HomePage> {
                 decoration: const InputDecoration(
                   labelText: 'Protocol',
                 ),
-                value: protocol,
+                initialValue: protocol,
                 items: const [
                   DropdownMenuItem(value: 'RDP', child: Text('Remote Desktop')),
                   DropdownMenuItem(value: 'SSH', child: Text('SSH')),

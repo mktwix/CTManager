@@ -12,6 +12,7 @@ class Tunnel {
   final bool saveCredentials;
   final String? preferredDriveLetter;
   final bool autoSelectDrive;
+  final String? remotePath;
 
   Tunnel({
     this.id,
@@ -25,6 +26,7 @@ class Tunnel {
     this.saveCredentials = false,
     this.preferredDriveLetter,
     this.autoSelectDrive = true,
+    this.remotePath,
   });
 
   String get launchCommand {
@@ -52,6 +54,7 @@ class Tunnel {
       'save_credentials': saveCredentials ? 1 : 0,
       'preferred_drive_letter': preferredDriveLetter,
       'auto_select_drive': autoSelectDrive ? 1 : 0,
+      'remote_path': remotePath,
     };
   }
 
@@ -68,6 +71,7 @@ class Tunnel {
       saveCredentials: map['save_credentials'] == 1,
       preferredDriveLetter: map['preferred_drive_letter'],
       autoSelectDrive: map['auto_select_drive'] == 1,
+      remotePath: map['remote_path'],
     );
   }
 
@@ -83,6 +87,7 @@ class Tunnel {
         saveCredentials: json['save_credentials'] == 1 || json['saveCredentials'] == true,
         preferredDriveLetter: json['preferred_drive_letter'] as String?,
         autoSelectDrive: json['auto_select_drive'] == 1 || json['autoSelectDrive'] == true,
+        remotePath: json['remote_path'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -97,6 +102,7 @@ class Tunnel {
         'save_credentials': saveCredentials ? 1 : 0,
         'preferred_drive_letter': preferredDriveLetter,
         'auto_select_drive': autoSelectDrive ? 1 : 0,
+        'remote_path': remotePath,
       };
 
   Tunnel copyWith({
@@ -111,6 +117,7 @@ class Tunnel {
     bool? saveCredentials,
     String? preferredDriveLetter,
     bool? autoSelectDrive,
+    String? remotePath,
   }) {
     return Tunnel(
       id: id ?? this.id,
@@ -124,6 +131,7 @@ class Tunnel {
       saveCredentials: saveCredentials ?? this.saveCredentials,
       preferredDriveLetter: preferredDriveLetter ?? this.preferredDriveLetter,
       autoSelectDrive: autoSelectDrive ?? this.autoSelectDrive,
+      remotePath: remotePath ?? this.remotePath,
     );
   }
 }

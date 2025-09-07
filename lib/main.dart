@@ -3,10 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqlite3/sqlite3.dart';
 import 'package:sqlite3/open.dart';
-import 'package:path/path.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:logger/logger.dart';
 import 'dart:io';
 import 'dart:ffi';
@@ -25,6 +22,14 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
+    // Check if running as administrator on Windows
+    if (Platform.isWindows) {
+      final isAdmin = await _isRunningAsAdmin();
+      if (!isAdmin) {
+        logger.w('App is not running as administrator. Some features may not work properly.');
+      }
+    }
+
     // Initialize sqflite_ffi
     if (Platform.isWindows || Platform.isLinux) {
       // Initialize FFI
@@ -41,10 +46,27 @@ void main() async {
     // Initialize database
     await DatabaseService.instance.initialize();
 
+    // Perform database read/write test
+    final dbTestSuccess = await DatabaseService.instance.testDatabaseReadWrite();
+    if (dbTestSuccess) {
+      LogService().info('Database test passed.');
+    } else {
+      LogService().error('Database test failed. Check logs for details.');
+    }
+
     runApp(const MyApp());
   } catch (e) {
     logger.e('Error in main: ${e.toString()}');
     rethrow;
+  }
+}
+
+Future<bool> _isRunningAsAdmin() async {
+  try {
+    final result = await Process.run('net', ['session'], runInShell: true);
+    return result.exitCode == 0;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -55,7 +77,7 @@ DynamicLibrary _openOnWindows() {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {

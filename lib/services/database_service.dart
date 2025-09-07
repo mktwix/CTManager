@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite/sqflite.dart';
 import '../services/log_service.dart';
 import '../models/tunnel.dart';
 import 'package:logger/logger.dart';
@@ -32,16 +31,27 @@ class DatabaseService {
         databaseFactory = databaseFactoryFfi;
       }
       
-      // Get the database path
-      final appDir = await getApplicationDocumentsDirectory();
-      final dbPath = join(appDir.path, 'ctmanager.db');
+      String dbPath;
+      if (Platform.isWindows) {
+        // For portable mode on Windows, use the executable's directory.
+        final exeDir = dirname(Platform.resolvedExecutable);
+        final dataDir = Directory(join(exeDir, 'data'));
+        if (!await dataDir.exists()) {
+          await dataDir.create(recursive: true);
+        }
+        dbPath = join(dataDir.path, 'ctmanager.db');
+      } else {
+        // Fallback to documents directory for other platforms.
+        final appDir = await getApplicationDocumentsDirectory();
+        dbPath = join(appDir.path, 'ctmanager.db');
+      }
       
       LogService().info('Opening database at $dbPath');
       
       // Open the database
       _database = await openDatabase(
         dbPath,
-        version: 2,
+        version: 3,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -66,7 +76,8 @@ class DatabaseService {
         is_local INTEGER DEFAULT 0,
         is_running INTEGER DEFAULT 0,
         preferred_drive_letter TEXT,
-        auto_select_drive INTEGER DEFAULT 1
+        auto_select_drive INTEGER DEFAULT 1,
+        remote_path TEXT
       )
     ''');
   }
@@ -76,6 +87,13 @@ class DatabaseService {
       // Add new columns for drive letter preferences
       await db.execute('ALTER TABLE tunnels ADD COLUMN preferred_drive_letter TEXT');
       await db.execute('ALTER TABLE tunnels ADD COLUMN auto_select_drive INTEGER DEFAULT 1');
+    }
+    if (oldVersion < 3) {
+      final tableInfo = await db.rawQuery('PRAGMA table_info(tunnels)');
+      final columnExists = tableInfo.any((column) => column['name'] == 'remote_path');
+      if (!columnExists) {
+        await db.execute('ALTER TABLE tunnels ADD COLUMN remote_path TEXT');
+      }
     }
   }
 
@@ -134,6 +152,45 @@ class DatabaseService {
     }
   }
 
+  Future<bool> testDatabaseReadWrite() async {
+    const testTable = 'db_test';
+    try {
+      LogService().info('Performing database read/write test...');
+      
+      // 1. Create a test table
+      await database.execute('CREATE TABLE $testTable (id INTEGER PRIMARY KEY, name TEXT)');
+      LogService().info('Test table "$testTable" created.');
+
+      // 2. Insert a test record
+      final testData = {'id': 1, 'name': 'test'};
+      await database.insert(testTable, testData);
+      LogService().info('Test record inserted.');
+
+      // 3. Read the test record
+      final result = await database.query(testTable);
+      if (result.isNotEmpty && result.first['name'] == 'test') {
+        LogService().info('Test record read successfully.');
+      } else {
+        throw Exception('Failed to read test record or data mismatch.');
+      }
+
+      // 4. Delete the test record
+      await database.delete(testTable, where: 'id = ?', whereArgs: [1]);
+      LogService().info('Test record deleted.');
+      
+      // 5. Drop the test table
+      await database.execute('DROP TABLE $testTable');
+      LogService().info('Test table "$testTable" dropped.');
+
+      LogService().info('Database read/write test successful.');
+      return true;
+
+    } catch (e) {
+      LogService().error('Database read/write test failed: $e');
+      return false;
+    }
+  }
+
   Future<List<Tunnel>> getSavedTunnels() async {
     final db = database;
     final List<Map<String, dynamic>> maps = await db.query('tunnels');
@@ -147,9 +204,15 @@ class DatabaseService {
       // Close existing connection
       await close();
       
-      // Get database path
-      final appDir = await getApplicationDocumentsDirectory();
-      final dbPath = join(appDir.path, 'ctmanager.db');
+      String dbPath;
+      if (Platform.isWindows) {
+        final exeDir = dirname(Platform.resolvedExecutable);
+        final dataDir = Directory(join(exeDir, 'data'));
+        dbPath = join(dataDir.path, 'ctmanager.db');
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        dbPath = join(appDir.path, 'ctmanager.db');
+      }
       
       // Delete the database file
       final dbFile = File(dbPath);

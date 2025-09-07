@@ -35,6 +35,7 @@ class _TunnelFormState extends State<TunnelForm> {
   late TextEditingController _domainController;
   late TextEditingController _usernameController;
   late TextEditingController _passwordController;
+  late TextEditingController _remotePathController;
   bool _saveCredentials = false;
   bool _showAuthFields = false;
   bool _autoSelectDrive = true;
@@ -57,6 +58,9 @@ class _TunnelFormState extends State<TunnelForm> {
     );
     _passwordController = TextEditingController(
       text: widget.tunnel?.password ?? ''
+    );
+    _remotePathController = TextEditingController(
+      text: widget.tunnel?.remotePath ?? ''
     );
     _saveCredentials = widget.tunnel?.saveCredentials ?? false;
     _showAuthFields = _protocol == 'SMB';
@@ -102,6 +106,7 @@ class _TunnelFormState extends State<TunnelForm> {
     _domainController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _remotePathController.dispose();
     super.dispose();
   }
 
@@ -144,7 +149,7 @@ class _TunnelFormState extends State<TunnelForm> {
                 },
               ),
               DropdownButtonFormField<String>(
-                value: _protocol,
+                initialValue: _protocol,
                 items: const [
                   DropdownMenuItem(value: 'RDP', child: Text('Remote Desktop')),
                   DropdownMenuItem(value: 'SSH', child: Text('SSH')),
@@ -196,6 +201,13 @@ class _TunnelFormState extends State<TunnelForm> {
                     return null;
                   },
                 ),
+                TextFormField(
+                  controller: _remotePathController,
+                  decoration: const InputDecoration(
+                    labelText: 'Remote Path (Optional)',
+                    hintText: 'e.g., share/folder',
+                  ),
+                ),
                 CheckboxListTile(
                   title: const Text('Save Credentials'),
                   value: _saveCredentials,
@@ -240,7 +252,7 @@ class _TunnelFormState extends State<TunnelForm> {
                               decoration: const InputDecoration(
                                 labelText: 'Preferred Drive Letter',
                               ),
-                              value: _preferredDriveLetter ?? _availableDriveLetters.first,
+                              initialValue: _preferredDriveLetter ?? _availableDriveLetters.first,
                               items: _availableDriveLetters.map((letter) {
                                 return DropdownMenuItem<String>(
                                   value: letter,
@@ -288,6 +300,7 @@ class _TunnelFormState extends State<TunnelForm> {
                 saveCredentials: _protocol == 'SMB' ? _saveCredentials : false,
                 preferredDriveLetter: _protocol == 'SMB' && !_autoSelectDrive ? _preferredDriveLetter : null,
                 autoSelectDrive: _protocol == 'SMB' ? _autoSelectDrive : true,
+                remotePath: _protocol == 'SMB' ? _remotePathController.text : null,
               );
               
               // Save tunnel configuration

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:convert';
 import 'package:logger/logger.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -111,7 +110,7 @@ class SmbService {
         LogService().warning('WinFsp installation completed but not detected in registry');
         
         // Try to check if the WinFsp DLLs exist as an alternative verification
-        final winFspDllPath = 'C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll';
+        const winFspDllPath = 'C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll';
         final winFspDllExists = await File(winFspDllPath).exists();
         
         if (winFspDllExists) {
@@ -309,12 +308,12 @@ class SmbService {
       
       // Create config content with password
       final configContent = '''
-[${configName}]
+[$configName]
 type = smb
 host = localhost
 port = ${tunnel.port}
 user = ${tunnel.username ?? ''}
-pass = ${obscuredPassword}
+pass = $obscuredPassword
 share = smb
 domain = 
 case_insensitive = true
@@ -492,11 +491,16 @@ hide_special_share = true
 
   // Mount an SMB share using rclone
   Future<bool> mountSmbShare(Tunnel tunnel, String driveLetter) async {
+    // We will now exclusively use the rclone approach as it's more reliable,
+    // especially with subfolder paths, and avoids admin-related visibility issues.
+    return await _mountWithRclone(tunnel, driveLetter);
+  }
+
+  // Mount SMB share using rclone
+  Future<bool> _mountWithRclone(Tunnel tunnel, String driveLetter) async {
     try {
-      LogService().info('Mounting SMB share for ${tunnel.domain}:${tunnel.port}...');
-      
-      // Check if running as administrator
-      final isAdmin = await _isRunningAsAdmin();
+      // Check if the user is running as admin and handle it
+      final bool isAdmin = await _isRunningAsAdmin();
       if (isAdmin) {
         LogService().warning('Application is running as administrator. This may cause SMB drive visibility issues.');
         
@@ -520,44 +524,44 @@ hide_special_share = true
         }
         
         // Try direct mounting first, since we're already running as admin
-        LogService().info('Attempting direct mounting first since we are running as admin');
-        final directSuccess = await _mountWithDirectNetUse(tunnel, driveLetter);
-        if (directSuccess) {
-          LogService().info('Direct SMB mounting successful');
-          _mountedDrives[tunnel.domain] = driveLetter;
+        // LogService().info('Attempting direct mounting first since we are running as admin');
+        // final directSuccess = await _mountWithDirectNetUse(tunnel, driveLetter);
+        // if (directSuccess) {
+        //   LogService().info('Direct SMB mounting successful');
+        //   _mountedDrives[tunnel.domain] = driveLetter;
           
-          // Verify the drive is accessible
-          final isAccessible = await _verifyDriveAccessibility(driveLetter);
-          if (isAccessible) {
-            LogService().info('Drive $driveLetter: is accessible after direct mounting');
-            return true;
-          } else {
-            LogService().warning('Drive $driveLetter: is not accessible after direct mounting');
+        //   // Verify the drive is accessible
+        //   final isAccessible = await _verifyDriveAccessibility(driveLetter);
+        //   if (isAccessible) {
+        //     LogService().info('Drive $driveLetter: is accessible after direct mounting');
+        //     return true;
+        //   } else {
+        //     LogService().warning('Drive $driveLetter: is not accessible after direct mounting');
             
-            // If the drive is not accessible, try to restart as current user
-            if (currentUsername.isNotEmpty) {
-              LogService().info('Attempting to restart application without administrator privileges for better SMB drive visibility.');
-              final success = await _restartAppAsCurrentUser();
-              if (success) {
-                // If we successfully initiated the restart, return false to prevent further processing
-                return false;
-              }
-            }
-          }
-        } else {
-          // If direct mounting failed and we have a username, try to restart as current user
-          if (currentUsername.isNotEmpty) {
-            LogService().info('Direct mounting failed. Attempting to restart application without administrator privileges for better SMB drive visibility.');
-            final success = await _restartAppAsCurrentUser();
-            if (success) {
-              // If we successfully initiated the restart, return false to prevent further processing
-              return false;
-            }
-          }
+        //     // If the drive is not accessible, try to restart as current user
+        //     if (currentUsername.isNotEmpty) {
+        //       LogService().info('Attempting to restart application without administrator privileges for better SMB drive visibility.');
+        //       final success = await _restartAppAsCurrentUser();
+        //       if (success) {
+        //         // If we successfully initiated the restart, return false to prevent further processing
+        //         return false;
+        //       }
+        //     }
+        //   }
+        // } else {
+        //   // If direct mounting failed and we have a username, try to restart as current user
+        //   if (currentUsername.isNotEmpty) {
+        //     LogService().info('Direct mounting failed. Attempting to restart application without administrator privileges for better SMB drive visibility.');
+        //     final success = await _restartAppAsCurrentUser();
+        //     if (success) {
+        //       // If we successfully initiated the restart, return false to prevent further processing
+        //       return false;
+        //     }
+        //   }
           
-          // If we couldn't restart, continue with the rclone approach
-          LogService().info('Could not restart application, continuing with admin privileges');
-        }
+        //   // If we couldn't restart, continue with the rclone approach
+        //   LogService().info('Could not restart application, continuing with admin privileges');
+        // }
       } else {
         LogService().info('Application is running without administrator privileges, which is recommended for SMB mounting.');
       }
@@ -579,7 +583,7 @@ hide_special_share = true
         }
         
         // Check if WinFsp DLL exists as an alternative verification
-        final winFspDllPath = 'C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll';
+        const winFspDllPath = 'C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll';
         final winFspDllExists = await File(winFspDllPath).exists();
         
         if (!winFspDllExists) {
@@ -646,10 +650,17 @@ hide_special_share = true
       // Create mount point directory if it doesn't exist
       final mountPoint = '$driveLetter:\\';
       
+      // Prepare the remote path
+      var remoteSpec = '$configName:';
+      if (tunnel.remotePath != null && tunnel.remotePath!.isNotEmpty) {
+        final path = tunnel.remotePath!.replaceAll('\\', '/');
+        remoteSpec += path;
+      }
+      
       // Prepare the mount command with the exact working parameters
       final mountArgs = [
         'mount',
-        '$configName:',
+        remoteSpec,
         mountPoint,
         '--config',
         configPath,
@@ -912,7 +923,7 @@ exit
       LogService().info('Created restart shortcut at $shortcutPath');
       
       // Show a notification to the user
-      final psShowNotification = '''
+      const psShowNotification = '''
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 \$notification = New-Object System.Windows.Forms.NotifyIcon
 \$notification.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
@@ -1064,7 +1075,7 @@ exit
       
       // Try an alternative approach using explorer.exe to launch cmd
       final explorerPath = p.join(tempDir.path, 'explorer_launch.bat');
-      final explorerContent = '''
+      const explorerContent = '''
 @echo off
 echo Launching non-elevated command prompt via explorer...
 explorer.exe shell:AppsFolder\\Microsoft.WindowsTerminal_8wekyb3d8bbwe!App
@@ -1377,7 +1388,7 @@ WshShell.Run "$rcloneCommand", 0, false
         
         // 4. Create a symbolic link in the Public folder to make it accessible to all users
         try {
-          final publicFolder = 'C:\\Users\\Public';
+          const publicFolder = 'C:\\Users\\Public';
           final linkName = 'SMB-Drive-$driveLetter';
           final linkPath = '$publicFolder\\$linkName';
           
@@ -1424,7 +1435,7 @@ WshShell.Run "$rcloneCommand", 0, false
               'powershell',
               [
                 '-Command',
-                'Start-Process powershell -ArgumentList "-Command \\\"New-PSDrive -Name $driveLetter -PSProvider FileSystem -Root \\\"$volumePath\\\" -Persist\\\"" -Verb RunAs'
+                'Start-Process powershell -ArgumentList "-Command \\"New-PSDrive -Name $driveLetter -PSProvider FileSystem -Root \\"$volumePath\\" -Persist\\"" -Verb RunAs'
               ],
               runInShell: true
             );
@@ -1494,7 +1505,7 @@ WshShell.Run "$rcloneCommand", 0, false
         LogService().info('Attempted to map volume path $volumePath to Y: drive');
         
         // Also try to create a mapping using localhost
-        final tempDriveLetter = 'X';
+        const tempDriveLetter = 'X';
         if (tempDriveLetter != driveLetter) {
           await Process.run(
             'cmd.exe',
@@ -1514,8 +1525,8 @@ echo Drive mapped to Y:
 pause
 ''';
         
-        final publicFolder = 'C:\\Users\\Public\\Desktop';
-        final batchPath = '$publicFolder\\Map SMB Drive.bat';
+        const publicFolder = 'C:\\Users\\Public\\Desktop';
+        const batchPath = '$publicFolder\\Map SMB Drive.bat';
         
         await File(batchPath).writeAsString(batchContent);
         
@@ -1686,7 +1697,7 @@ if (Test-Path -Path \$drivePath) {
   Future<void> _createDesktopShortcut(String driveLetter, String configName) async {
     try {
       // Get the Public Desktop path
-      final publicDesktop = 'C:\\Users\\Public\\Desktop';
+      const publicDesktop = 'C:\\Users\\Public\\Desktop';
       final currentUserDesktop = await _getCurrentUserDesktopPath();
       
       // Create a shortcut name based on the drive letter and config
@@ -2179,7 +2190,7 @@ try {
       final batchFilePath = p.join(desktopPath, 'Restart_Explorer.bat');
       
       // Create a batch file with instructions
-      final batchContent = '''@echo off
+      const batchContent = '''@echo off
 echo ========================================================
 echo   Windows Explorer Restart Helper - CT Manager
 echo ========================================================
@@ -2242,7 +2253,7 @@ del "%~f0"
       LogService().info('Created Explorer restart helper at $batchFilePath');
       
       // Show a balloon tip notification
-      final psShowNotification = '''
+      const psShowNotification = '''
 [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
 \$notification = New-Object System.Windows.Forms.NotifyIcon
 \$notification.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
@@ -2418,7 +2429,7 @@ try {
       );
       
       // Approach 2: Use direct PowerShell commands to refresh Explorer
-      final psCommand = '''
+      const psCommand = '''
 # Refresh Explorer using COM objects
 \$shell = New-Object -ComObject Shell.Application
 \$shell.Windows() | ForEach-Object { \$_.Refresh() }
@@ -2440,7 +2451,7 @@ Add-Type -MemberDefinition \$code -Namespace WinAPI -Name Explorer
       );
       
       // Approach 3: Send a WM_DEVICECHANGE message to all windows
-      final deviceChangeCommand = '''
+      const deviceChangeCommand = '''
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -2614,7 +2625,7 @@ timeout /t 2 /nobreak > nul
 
 :: Start the application without admin privileges using runas with trustlevel parameter
 :: /trustlevel:0x20000 ensures the process starts without elevation
-runas /trustlevel:0x20000 /user:$currentUsername "cmd /c start \"\" \"$appPath\""
+runas /trustlevel:0x20000 /user:$currentUsername "cmd /c start "" "$appPath""
 
 :: If runas fails, try alternative method with explorer.exe (which runs without elevation)
 if %ERRORLEVEL% NEQ 0 (
@@ -2748,10 +2759,6 @@ exit
       
       // Find an available drive letter if not specified
       final letter = driveLetter ?? await findAvailableDriveLetter();
-      if (letter == null) {
-        LogService().error('No available drive letters');
-        return false;
-      }
       
       // Create rclone config
       final configPath = await _createRcloneConfig(domain, username, password);
@@ -2940,7 +2947,7 @@ exit
       
       // Create the config content
       final configContent = '''
-[${remoteName}]
+[$remoteName]
 type = smb
 host = $domain
 user = $username

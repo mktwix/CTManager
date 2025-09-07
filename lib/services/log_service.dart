@@ -41,6 +41,35 @@ class LogEntry {
       orElse: () => LogCategory.info,
     ),
   );
+
+  factory LogEntry.fromLogLine(String line) {
+    final regex = RegExp(r'^\[(.*?)\]\s(.*?):\s(.*)$');
+    final match = regex.firstMatch(line);
+
+    if (match != null && match.groupCount == 3) {
+      try {
+        final timestamp = DateTime.parse(match.group(1)!);
+        final categoryStr = match.group(2)!.toLowerCase();
+        final message = match.group(3)!;
+        
+        final category = LogCategory.values.firstWhere(
+          (e) => e.name == categoryStr,
+          orElse: () => LogCategory.info,
+        );
+
+        return LogEntry(
+          timestamp: timestamp,
+          message: message,
+          category: category,
+        );
+      } catch (e) {
+        // Fallback for parsing errors
+        return LogEntry(timestamp: DateTime.now(), message: line, category: LogCategory.system);
+      }
+    }
+    // Fallback for lines that don't match the format
+    return LogEntry(timestamp: DateTime.now(), message: line, category: LogCategory.system);
+  }
 }
 
 class LogService extends ChangeNotifier {
@@ -80,11 +109,9 @@ class LogService extends ChangeNotifier {
         try {
           final lines = await _logFile!.readAsLines();
           for (var line in lines) {
-            _logs.add(LogEntry(
-              timestamp: DateTime.now(),
-              message: line,
-              category: LogCategory.info,
-            ));
+            if (line.isNotEmpty) {
+              _logs.add(LogEntry.fromLogLine(line));
+            }
           }
         } catch (e) {
           print('Error loading logs: $e');

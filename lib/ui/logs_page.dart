@@ -3,7 +3,7 @@ import '../services/log_service.dart';
 import '../main.dart';  // Import main.dart to access the color definitions
 
 class LogsPage extends StatefulWidget {
-  const LogsPage({Key? key}) : super(key: key);
+  const LogsPage({super.key});
 
   @override
   State<LogsPage> createState() => _LogsPageState();

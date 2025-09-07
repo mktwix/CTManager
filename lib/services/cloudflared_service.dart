@@ -87,7 +87,7 @@ class CloudflaredService {
         if (tokenMatch == null) continue;
 
         final token = tokenMatch.group(1);
-        LogService().info('Extracted token (first 20 chars): ${token?.substring(0, min(20, token?.length ?? 0))}...');
+        LogService().info('Extracted token (first 20 chars): ${token?.substring(0, min(20, token.length))}...');
         
         if (token == null) continue;
 
@@ -182,79 +182,27 @@ class CloudflaredService {
         return false;
       }
 
-      // Start the process and wait for it to initialize
+      // Start the process
       await Process.run('wscript.exe', [vbsPath]);
       
-      // Give the process a moment to start
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      // More efficient process detection with shorter intervals
-      bool processFound = false;
-      for (int i = 0; i < 5; i++) {
-        final result = await Process.run('powershell', [
-          'Get-CimInstance Win32_Process -Filter "Name = \'cloudflared.exe\'" | Select-Object ProcessId,CommandLine | ConvertTo-Json'
-        ]);
-
-        try {
-          final output = result.stdout.toString().trim();
-          if (output.isEmpty) {
-            await Future.delayed(const Duration(milliseconds: 200));
-            continue;
-          }
-
-          dynamic decoded = json.decode(output);
-          List<dynamic> processes = decoded is List ? decoded : [decoded];
-
-          for (var process in processes) {
-            if (process['CommandLine']?.toString().contains('access $domain') == true) {
-              final cloudflaredPid = process['ProcessId'];
-              if (cloudflaredPid != null) {
-                LogService().info('Found process: PID $cloudflaredPid for $domain');
-                _cloudflaredPids[portNum] = cloudflaredPid;
-                processFound = true;
-                break;
-              }
-            }
-          }
-          
-          if (processFound) break;
-        } catch (e) {
-          LogService().error('Error parsing process info: $e');
-        }
-
-        if (!processFound) {
-          await Future.delayed(const Duration(milliseconds: 200));
-        }
-      }
-
-      if (!processFound) {
-        LogService().warning('Could not find cloudflared process for $domain');
-      }
-
-      // Add to active tunnels
-      _activeTunnels[domain] = Tunnel(
-        domain: domain,
-        port: port,
-        protocol: 'tcp',
-        isRunning: true
-      );
-
+      // Short delay to allow process to start
+      await Future.delayed(const Duration(milliseconds: 500));
+      
       // Quick connection check
-      int retries = 0;
-      while (retries < 3) {
-        if (await _checkTunnelConnection(domain)) {
-          LogService().system('Tunnel appears to be running (port is in use)');
-          return true;
-        }
-        retries++;
-        if (retries < 3) {
-          await Future.delayed(const Duration(milliseconds: 200));
-        }
+      if (await _checkTunnelConnection(domain)) {
+        LogService().system('Tunnel started successfully (port is in use)');
+        // Add to active tunnels
+        _activeTunnels[domain] = Tunnel(
+          domain: domain,
+          port: port,
+          protocol: 'tcp',
+          isRunning: true
+        );
+        return true;
+      } else {
+        LogService().error('ERROR: Tunnel failed to start (port still available)');
+        return false;
       }
-
-      LogService().error('ERROR: Tunnel does not appear to be running (port is still available)');
-      await stopPortForwarding(port);
-      return false;
     } catch (e) {
       LogService().error('ERROR: Failed to start port forwarding: $e');
       return false;
@@ -276,18 +224,6 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
     } catch (e) {
       _logger.e('Error creating VBS file: $e');
       return null;
-    }
-  }
-
-  void _cleanupProcess(int port) {
-    final process = _processes[port];
-    if (process != null) {
-      try {
-        process.kill(ProcessSignal.sigterm);
-      } catch (e) {
-        _logger.e('Error killing process: $e');
-      }
-      _processes.remove(port);
     }
   }
 
@@ -395,7 +331,7 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
       LogService().info('Attempting taskkill as fallback');
       final taskkillResult = await Process.run(
         'taskkill',
-        ['/F', '/IM', 'cloudflared.exe'],
+        ['/F', '/IM', 'cloudflared.exe', '/FI', 'USERNAME ne SYSTEM'],
         runInShell: true
       );
       LogService().info('Taskkill result: ${taskkillResult.stdout.toString().trim()}');
@@ -476,16 +412,6 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
     final portNum = int.tryParse(tunnel.port);
     if (portNum == null) return false;
     return _processes.containsKey(portNum);
-  }
-
-  Future<bool> _checkPortAvailability(int port) async {
-    try {
-      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
-      await server.close();
-      return true;
-    } catch (e) {
-      return false;
-    }
   }
 
   Future<String> getLoginCommand() async {
@@ -599,7 +525,7 @@ ingress:
   Future<List<Map<String, String>>> listTunnels() async {
     try {
       LogService().info('Executing cloudflared tunnel list command...');
-      ProcessResult result = await Process.run('cloudflared', ['tunnel', 'list', '--output', 'json'], runInShell: true);
+      ProcessResult result = await Process.run('cloudflared', ['tunnel', 'list', '--output', 'json'], runInShell: true).timeout(const Duration(seconds: 15));
       
       LogService().info('Tunnel list command exit code: ${result.exitCode}');
       LogService().info('Tunnel list stdout: ${result.stdout}');
@@ -689,21 +615,6 @@ ingress:
     } catch (e) {
       _logger.e('Error deleting tunnel: $e');
       return false;
-    }
-  }
-
-  Future<String?> _getTunnelIdByDomain(String domain) async {
-    try {
-      final tunnels = await listTunnels();
-      for (var tunnel in tunnels) {
-        if (tunnel['url']?.contains(domain) == true) {
-          return tunnel['id'];
-        }
-      }
-      return null;
-    } catch (e) {
-      _logger.e('Error getting tunnel ID: $e');
-      return null;
     }
   }
 
@@ -857,8 +768,7 @@ ingress:
       LogService().info('Executing PowerShell command to get services...');
       final command = [
         '-Command',
-        r"Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*cloudflared*' }" +
-        r" | Select-Object @{Name='Name';Expression={$_.Name}},@{Name='PathName';Expression={$_.PathName}} | ConvertTo-Json -Compress"
+        r"Get-CimInstance Win32_Service | Where-Object { $_.PathName -like '*cloudflared*' }" r" | Select-Object @{Name='Name';Expression={$_.Name}},@{Name='PathName';Expression={$_.PathName}} | ConvertTo-Json -Compress"
       ];
       
       LogService().info('Full command: powershell ${command.join(' ')}');
@@ -867,7 +777,7 @@ ingress:
         'powershell',
         command,
         runInShell: true,
-      );
+      ).timeout(const Duration(seconds: 10));
 
       LogService().info('Command executed. Exit code: ${result.exitCode}');
       final output = result.stdout.toString().trim();
@@ -945,7 +855,7 @@ ingress:
         if (tokenMatch != null) {
           final token = tokenMatch.group(1);
           _logger.i('7. Token found in path');
-          _logger.d('   Raw token: ${token?.substring(0, min<int>(20, token.length ?? 0))}...');
+          _logger.d('   Raw token: ${token?.substring(0, min<int>(20, token.length))}...');
           _logger.d('   Token length: ${token?.length ?? 0} characters');
 
           try {
@@ -982,7 +892,7 @@ ingress:
               _logger.w('9. Failed to decode token');
             }
           } catch (e) {
-            _logger.e('15. Token processing failed', e);
+            _logger.e('15. Token processing failed: $e');
           }
         } else {
           _logger.w('7. No token found in service path');
@@ -992,7 +902,7 @@ ingress:
       _logger.i('16. Completed tunnel detection. Found ${tunnelInfo.length} valid tunnels');
       return tunnelInfo;
     } catch (e) {
-      _logger.e('!! Tunnel detection process failed !!', e);
+      _logger.e('!! Tunnel detection process failed !!: $e');
       return [];
     }
   }
@@ -1039,7 +949,7 @@ ingress:
           '''Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq "cloudflared.exe" } | Select-Object ProcessId,CommandLine | ConvertTo-Json'''
         ],
         runInShell: true
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
         final Map<String, int> runningTunnels = {};
