@@ -16,7 +16,7 @@ final logger = Logger();
 
 // Define Cloudflare brand colors
 const cloudflareOrange = Color(0xFFF48120);
-const cloudflareBlue = Color(0xFF404242);
+const cloudflareBlue = Color(0xFF424242);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -84,7 +84,7 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (BuildContext context) => TunnelProvider(),
       child: MaterialApp(
-        title: 'Cloudflare Tunnel Manager',
+        title: 'Cloudflare Tunnel Access Manager',
         theme: ThemeData(
           primaryColor: cloudflareOrange,
           colorScheme: ColorScheme.fromSwatch().copyWith(

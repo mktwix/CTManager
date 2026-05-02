@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../services/log_service.dart';
 import '../models/tunnel.dart';
 import 'package:logger/logger.dart';
+import 'secure_storage_service.dart';
 
 final Logger _logger = Logger(
   printer: PrettyPrinter(),
@@ -51,7 +52,7 @@ class DatabaseService {
       // Open the database
       _database = await openDatabase(
         dbPath,
-        version: 3,
+        version: 4,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       );
@@ -70,8 +71,6 @@ class DatabaseService {
         domain TEXT NOT NULL,
         port TEXT NOT NULL,
         protocol TEXT NOT NULL,
-        username TEXT,
-        password TEXT,
         save_credentials INTEGER DEFAULT 0,
         is_local INTEGER DEFAULT 0,
         is_running INTEGER DEFAULT 0,
@@ -84,7 +83,6 @@ class DatabaseService {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      // Add new columns for drive letter preferences
       await db.execute('ALTER TABLE tunnels ADD COLUMN preferred_drive_letter TEXT');
       await db.execute('ALTER TABLE tunnels ADD COLUMN auto_select_drive INTEGER DEFAULT 1');
     }
@@ -94,6 +92,48 @@ class DatabaseService {
       if (!columnExists) {
         await db.execute('ALTER TABLE tunnels ADD COLUMN remote_path TEXT');
       }
+    }
+    if (oldVersion < 4) {
+      // Migrate credentials to secure storage and remove credential columns
+      final List<Map<String, dynamic>> oldTunnels = await db.query('tunnels');
+
+      for (var tunnelData in oldTunnels) {
+        if (tunnelData['save_credentials'] == 1 &&
+            tunnelData['username'] != null &&
+            tunnelData['password'] != null) {
+          try {
+            await SecureStorageService.saveCredentials(
+              tunnelData['domain'] as String,
+              tunnelData['username'] as String,
+              tunnelData['password'] as String,
+            );
+            LogService().info('Migrated credentials for ${tunnelData['domain']} to secure storage.');
+          } catch (e) {
+            LogService().error('Failed to migrate credentials for ${tunnelData['domain']}: $e');
+          }
+        }
+      }
+
+      // Re-create the table without the credential columns
+      await db.execute('CREATE TABLE tunnels_new ('
+          'id INTEGER PRIMARY KEY AUTOINCREMENT,'
+          'domain TEXT NOT NULL,'
+          'port TEXT NOT NULL,'
+          'protocol TEXT NOT NULL,'
+          'save_credentials INTEGER DEFAULT 0,'
+          'is_local INTEGER DEFAULT 0,'
+          'is_running INTEGER DEFAULT 0,'
+          'preferred_drive_letter TEXT,'
+          'auto_select_drive INTEGER DEFAULT 1,'
+          'remote_path TEXT'
+          ')');
+
+      await db.execute('INSERT INTO tunnels_new (id, domain, port, protocol, save_credentials, is_local, is_running, preferred_drive_letter, auto_select_drive, remote_path) '
+          'SELECT id, domain, port, protocol, save_credentials, is_local, is_running, preferred_drive_letter, auto_select_drive, remote_path FROM tunnels');
+      
+      await db.execute('DROP TABLE tunnels');
+      await db.execute('ALTER TABLE tunnels_new RENAME TO tunnels');
+      LogService().info('Database schema upgraded to version 4. Removed credential columns.');
     }
   }
 

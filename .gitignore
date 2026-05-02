@@ -97,9 +97,26 @@ GoogleService-Info.plist
 *.msixbundle
 *.appx
 *.appxbundle
+*.zip
 
 # GitHub specific
 .github/workflows/*.log
 *.swp
 *~
 ._*
+
+# Local debug/test artifacts
+analyze_out.txt
+output_autoselect.txt
+test_*.txt
+test_*.ps1
+test.bat
+test.vbs
+test_*.dart
+patch_*.dart
+
+# Local release artifacts (keep source assets, ignore bundles)
+release/*.zip
+
+# Signing files / local secrets
+CERTIFICATE.pfx

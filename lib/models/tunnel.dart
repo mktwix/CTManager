@@ -1,32 +1,28 @@
 // lib/models/tunnel.dart
 
-class Tunnel {
+class DomainForward {
   final int? id;
   final String domain;
   final String port;
   final String protocol;
-  bool isRunning;
   final bool isLocal;
-  final String? username;
-  final String? password;
-  final bool saveCredentials;
+  final bool isRunning;
   final String? preferredDriveLetter;
   final bool autoSelectDrive;
   final String? remotePath;
+  final bool saveCredentials;
 
-  Tunnel({
+  DomainForward({
     this.id,
     required this.domain,
     required this.port,
     required this.protocol,
-    this.isRunning = false,
     this.isLocal = false,
-    this.username,
-    this.password,
-    this.saveCredentials = false,
+    this.isRunning = false,
     this.preferredDriveLetter,
     this.autoSelectDrive = true,
     this.remotePath,
+    this.saveCredentials = false,
   });
 
   String get launchCommand {
@@ -49,46 +45,42 @@ class Tunnel {
       'protocol': protocol,
       'is_local': isLocal ? 1 : 0,
       'is_running': isRunning ? 1 : 0,
-      'username': username,
-      'password': password,
-      'save_credentials': saveCredentials ? 1 : 0,
       'preferred_drive_letter': preferredDriveLetter,
       'auto_select_drive': autoSelectDrive ? 1 : 0,
       'remote_path': remotePath,
+      'save_credentials': saveCredentials ? 1 : 0,
     };
   }
 
-  factory Tunnel.fromMap(Map<String, dynamic> map) {
-    return Tunnel(
+  factory DomainForward.fromMap(Map<String, dynamic> map) {
+    return DomainForward(
       id: map['id'],
       domain: map['domain'],
       port: map['port'],
       protocol: map['protocol'],
       isLocal: map['is_local'] == 1,
       isRunning: map['is_running'] == 1,
-      username: map['username'],
-      password: map['password'],
-      saveCredentials: map['save_credentials'] == 1,
       preferredDriveLetter: map['preferred_drive_letter'],
       autoSelectDrive: map['auto_select_drive'] == 1,
       remotePath: map['remote_path'],
+      saveCredentials: map['save_credentials'] == 1,
     );
   }
 
-  factory Tunnel.fromJson(Map<String, dynamic> json) => Tunnel(
-        id: json['id'] as int?,
-        domain: json['domain'] as String,
-        port: json['port'] as String,
-        protocol: json['protocol'] as String,
-        isLocal: json['is_local'] == 1 || json['isLocal'] == true,
-        isRunning: json['is_running'] == 1 || json['isRunning'] == true,
-        username: json['username'] as String?,
-        password: json['password'] as String?,
-        saveCredentials: json['save_credentials'] == 1 || json['saveCredentials'] == true,
-        preferredDriveLetter: json['preferred_drive_letter'] as String?,
-        autoSelectDrive: json['auto_select_drive'] == 1 || json['autoSelectDrive'] == true,
-        remotePath: json['remote_path'] as String?,
-      );
+  factory DomainForward.fromJson(Map<String, dynamic> json) {
+    return DomainForward(
+      id: json['id'],
+      domain: json['domain'],
+      port: json['port'],
+      protocol: json['protocol'],
+      isLocal: json['is_local'] == 1,
+      isRunning: json['is_running'] == 1,
+      preferredDriveLetter: json['preferred_drive_letter'],
+      autoSelectDrive: json['auto_select_drive'] == 1,
+      remotePath: json['remote_path'],
+      saveCredentials: json['save_credentials'] == 1,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -97,41 +89,37 @@ class Tunnel {
         'protocol': protocol,
         'is_local': isLocal ? 1 : 0,
         'is_running': isRunning ? 1 : 0,
-        'username': username,
-        'password': password,
-        'save_credentials': saveCredentials ? 1 : 0,
         'preferred_drive_letter': preferredDriveLetter,
         'auto_select_drive': autoSelectDrive ? 1 : 0,
         'remote_path': remotePath,
+        'save_credentials': saveCredentials ? 1 : 0,
       };
 
-  Tunnel copyWith({
+  DomainForward copyWith({
     int? id,
     String? domain,
     String? port,
     String? protocol,
     bool? isLocal,
     bool? isRunning,
-    String? username,
-    String? password,
-    bool? saveCredentials,
     String? preferredDriveLetter,
     bool? autoSelectDrive,
     String? remotePath,
+    bool? saveCredentials,
   }) {
-    return Tunnel(
+    return DomainForward(
       id: id ?? this.id,
       domain: domain ?? this.domain,
       port: port ?? this.port,
       protocol: protocol ?? this.protocol,
       isLocal: isLocal ?? this.isLocal,
       isRunning: isRunning ?? this.isRunning,
-      username: username ?? this.username,
-      password: password ?? this.password,
-      saveCredentials: saveCredentials ?? this.saveCredentials,
       preferredDriveLetter: preferredDriveLetter ?? this.preferredDriveLetter,
       autoSelectDrive: autoSelectDrive ?? this.autoSelectDrive,
       remotePath: remotePath ?? this.remotePath,
+      saveCredentials: saveCredentials ?? this.saveCredentials,
     );
   }
 }
+
+typedef Tunnel = DomainForward;

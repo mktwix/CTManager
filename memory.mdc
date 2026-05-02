@@ -1,0 +1,181 @@
+# CTManager Memory
+
+## The Genesis Block
+CTManager is a Flutter desktop application for Windows-first operators who need to access private services through Cloudflare Tunnel without requiring Cloudflare WARP on client endpoints. The product goal is to provide a local control plane for tunnel-based forwarding and service launch workflows (RDP, SSH, SMB) with persistent configuration, local runtime state management, and operational logging.
+
+The core business flow is:
+1. Persist domain-to-local-port forwarding definitions in local SQLite.
+2. Start or stop local `cloudflared access tcp` processes per configured tunnel entry.
+3. For SMB entries, establish and manage rclone-backed Windows drive mounts on top of the local forwarded port.
+4. Surface status, logs, and controls in a desktop UI for non-terminal users.
+
+## System Architecture and Routing
+
+### Runtime Entry Points
+- `lib/main.dart` initializes Flutter bindings, sets up `sqflite_common_ffi`, configures sqlite3 loading on Windows, initializes `DatabaseService`, performs a DB read/write health test, and boots `MyApp`.
+- Windows privilege check (`net session`) is performed at startup; non-admin mode is recommended for SMB visibility behavior.
+
+### Frontend Navigation and Screen Topology
+- Root UI is `MaterialApp(home: HomePage())`.
+- Primary screen: `lib/ui/home_page.dart`.
+  - Top area: running tunnel card (ID/name/login prompt).
+  - Main area: responsive split (domain access list + live logs panel) collapses to vertical stack under narrow width.
+- Modal/dialog flows:
+  - `SmbAuthDialog` for SMB credentials.
+  - `DriveLetterDialog` for manual drive-letter selection when auto-select disabled.
+  - `AdminWarningDialog` shown before SMB flow if process runs elevated.
+  - Inline add/edit/delete dialogs in `HomePage`.
+  - `TunnelSelectionDialog` for Cloudflare tunnel selection/create path.
+
+### Service Layer Boundaries
+- `CloudflaredService`: process orchestration, cloudflared install/auth/list/create/delete/route helpers, running tunnel/service introspection.
+- `SmbService`: WinFsp/rclone install checks, per-domain rclone config generation, mount/unmount workflow, drive visibility and explorer refresh routines.
+- `DatabaseService`: SQLite lifecycle, schema migration, CRUD wrappers.
+- `SecureStorageService`: persisted SMB credentials via `flutter_secure_storage`.
+- `LogService`: in-memory + file-backed log sink with category filtering and token sanitization.
+
+### Provider Orchestration
+- `TunnelProvider` is the application state coordinator:
+  - Loads DB entries and syncs runtime state.
+  - Starts/stops forwarding and SMB mounting.
+  - Maintains processing lock set per domain to prevent duplicate concurrent operations.
+  - Exposes import/export and cleanup behavior.
+
+## API Communication Contracts
+
+### Cloudflare CLI Contracts
+- Authentication check: `cloudflared tunnel list` stderr inspection for origin cert errors.
+- Tunnel list contract: `cloudflared tunnel list --output json` expected array items:
+  - `id: String`
+  - `name: String`
+  - `url: String?` (mapped to empty string if absent)
+- Tunnel creation contract:
+  - Command: `cloudflared tunnel create <name>`
+  - Output parsing regex: `Created tunnel ([\w-]+)` to derive tunnel ID.
+- DNS route command:
+  - `cloudflared tunnel route dns <tunnelId> <domain>`
+
+### Runtime Forwarding Contract
+- Start forwarding command:
+  - `cloudflared access tcp --hostname <domain> --url tcp://localhost:<port>`
+- Connection identity contract:
+  - Unique key: `<domain>:<port>`
+  - State machine labels: `starting`, `running`, `stopping`, `failed`, unknown/null.
+- Stop forwarding contract:
+  - Prefers tracked `Process`/PID termination (`sigterm` then `sigkill`) with fallback lookups.
+
+### Tunnel Import/Export JSON Contract
+- Export envelope: `{ "tunnels": [...] }`
+- Tunnel payload fields:
+  - `id`, `domain`, `port`, `protocol`
+  - `is_local` (`0|1`)
+  - `is_running` (forced to `0` on export for portability)
+  - `remote_path`
+  - `preferred_drive_letter`
+  - `auto_select_drive` (`0|1`)
+  - `save_credentials` (`0|1`)
+
+### SMB Credential Contract
+- Secure storage key scheme:
+  - Username: `<domain>_username`
+  - Password: `<domain>_password`
+- Save/delete is controlled from SMB dialogs and tunnel edit flows.
+
+## Data Ownership and Schema
+
+### Source of Truth
+- Persistent tunnel configuration: SQLite `tunnels` table (local app data).
+- Runtime process state: in-memory maps in `CloudflaredService` + `TunnelProvider`.
+- SMB mount tracking: in-memory domain->drive and domain->RC-port maps in `SmbService`.
+- Sensitive credentials: OS secure storage via `flutter_secure_storage`.
+
+### SQLite Schema (`tunnels`)
+Columns:
+- `id INTEGER PRIMARY KEY AUTOINCREMENT`
+- `domain TEXT NOT NULL`
+- `port TEXT NOT NULL`
+- `protocol TEXT NOT NULL`
+- `save_credentials INTEGER DEFAULT 0`
+- `is_local INTEGER DEFAULT 0`
+- `is_running INTEGER DEFAULT 0`
+- `preferred_drive_letter TEXT`
+- `auto_select_drive INTEGER DEFAULT 1`
+- `remote_path TEXT`
+
+### Migration History
+- `< v2`: added `preferred_drive_letter`, `auto_select_drive`.
+- `< v3`: added `remote_path` with pragma guard.
+- `< v4`: migrated `username/password` out of DB into secure storage, recreated table without plaintext credential columns.
+
+## State Management
+
+### App State Domains
+- `TunnelProvider` state:
+  - `_tunnels: List<Tunnel>`
+  - `_forwardingStatus: Map<domain, port>`
+  - `_runningTunnel: Map<String, String>?`
+  - `_processingTunnels: Set<domain>`
+  - `_isLoading`, `_error`
+- `CloudflaredService` runtime maps:
+  - `_connectionStates`, `_connectionPids`, `_connectionProcesses`, `_cloudflaredPids`, `_activeTunnels`
+- `SmbService` runtime maps:
+  - `_mountedDrives`, `_rcPorts`
+
+### UI State
+- `HomePage` holds log category filter and initial-load gate.
+- Dialog widgets (`SmbAuthDialog`, `DriveLetterDialog`, edit dialog StatefulBuilder) hold short-lived form state.
+
+### Persistence vs Ephemeral Split
+- Persistent:
+  - Tunnel metadata in SQLite.
+  - Credentials in secure storage (opt-in).
+  - Logs in `data/ctmanager.log`.
+- Ephemeral:
+  - Process handles/PIDs, mount RC ports, in-progress toggles.
+
+## Frontend UI and Styling
+
+### Theme and Visual Tokens
+- Primary brand color: `cloudflareOrange = 0xFFF48120`.
+- Secondary/dark neutral: `cloudflareBlue = 0xFF424242`.
+- App-wide ThemeData applies primary/secondary, AppBar color, elevated button defaults.
+
+### Layout Contracts
+- `HomePage` uses responsive breakpoint around `maxWidth < 800`:
+  - Narrow: stacked cards in scroll view.
+  - Wide: side-by-side `Expanded` panels.
+- Domain list item behavior:
+  - Running SMB shows mounted drive letter and Explorer open action.
+  - Running non-SMB shows launch action.
+  - Processing domains swap controls for spinner.
+
+### UX Contracts
+- Prevent duplicate start/stop via `_processingTunnels`.
+- SMB flow gathers all user input first (credentials + drive selection) before starting background processes.
+- On SMB mount failure, provider compensates by stopping tunnel and rolling back running state.
+
+## Current Risks and Debt
+
+1. Version drift:
+   - `README.md` advertises `0.8.0` while `pubspec.yaml` and `msix_version` remain `0.6.0`.
+2. Database version constant inconsistency:
+   - Open DB uses `version: 4` but trailing `_databaseVersion` constant remains `2` in `DatabaseService`.
+3. Domain uniqueness assumptions:
+   - Provider enforces unique domain (not domain+port), limiting multiple forwards on one domain.
+4. State reconciliation gaps:
+   - `getRunningCloudflaredProcesses()` depends on in-memory connection states; cold-start recovery for externally started processes is partial and may miss legacy processes.
+5. SMB unmount complexity:
+   - Multi-step unmount/cleanup pipeline uses RC, taskkill, PowerShell, mountvol, net use, shell refresh; high operational complexity and potential edge-case residue.
+6. Admin-context mount ergonomics:
+   - Elevated-mode workaround uses scheduled task launch; behavior can vary by user session policy.
+7. Security hygiene still mixed:
+   - Secure storage adopted for SMB credentials, but older helper scripts and test artifacts in repo root indicate ad hoc local tooling that could leak operational details if committed.
+8. Legacy/deprecated paths still present:
+   - Deprecated `_createRcloneConfig` remains in `SmbService`, increasing maintenance surface.
+
+## Architectural Decisions to Preserve
+- Credential storage moved from SQLite columns to secure storage (migration path retained).
+- SMB mounting standardized on rclone flow rather than direct legacy mount methods.
+- Tunnel export intentionally normalizes runtime state (`is_running = 0`) for cross-machine portability.
+- UI keeps logs and controls co-located to make troubleshooting first-class during tunnel operations.
+

@@ -24,6 +24,7 @@ dependencies:
   file_picker: ^10.3.2
   win32: ^5.14.0
   ffi: ^2.1.4
+  flutter_secure_storage: ^9.2.4
 
 dev_dependencies:
   flutter_test:
@@ -63,7 +64,10 @@ msix_config:
   logo_path: assets/icon.jpg
   capabilities: internetClient
   certificate_path: CERTIFICATE.pfx
-  certificate_password: 1234567890
+  # IMPORTANT: Do not hardcode the certificate password here.
+  # Use an environment variable during your build process.
+  # Example: certificate_password: $env:CERT_PASSWORD
+  # certificate_password: 1234567890
   install_certificate: true
   store: false  # Set to true if publishing to Microsoft Store
   dependencies:

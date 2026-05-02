@@ -94,6 +94,10 @@ class _DriveLetterDialogState extends State<DriveLetterDialog> {
             ),
       actions: [
         TextButton(
+          onPressed: _isLoading ? null : _loadAvailableDriveLetters,
+          child: const Text('Refresh'),
+        ),
+        TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),

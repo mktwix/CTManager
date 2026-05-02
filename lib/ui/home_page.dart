@@ -4,15 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/tunnel_provider.dart';
 import '../models/tunnel.dart';
-import 'tunnel_form.dart';
 import 'tunnel_list_item.dart';
 import '../services/log_service.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
-import '../ui/smb_auth_dialog.dart';
 import '../services/smb_exceptions.dart';
+import '../services/secure_storage_service.dart';
 import '../main.dart';  // Import main.dart to access the color definitions
 
 // Using colors defined in main.dart
@@ -51,7 +50,7 @@ class _HomePageState extends State<HomePage> {
           backgroundColor: Colors.grey[100],
           appBar: AppBar(
             backgroundColor: cloudflareOrange,
-            title: const Text('Cloudflare Tunnel Manager'),
+            title: const Text('Cloudflare Tunnel Access Manager'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),
@@ -74,7 +73,7 @@ class _HomePageState extends State<HomePage> {
                           ),
                           const SizedBox(height: 24),
                           Text(
-                            'No running tunnel detected',
+                            'No tunnel access configured',
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                           const SizedBox(height: 16),
@@ -172,269 +171,280 @@ class _HomePageState extends State<HomePage> {
                           ),
                         ),
 
-                        // Main content row containing Port Forwarding and Logs
+                        // Main content area - responsive layout
                         Expanded(
-                          child: Row(
-                            children: [
-                              // Port Forwarding Section
-                              Expanded(
-                                flex: 1,
-                                child: Card(
-                                  margin: const EdgeInsets.only(left: 16, right: 8, bottom: 16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              'Port Forwarding',
-                                              style: Theme.of(context).textTheme.titleLarge,
-                                            ),
-                                            Row(
-                                              children: [
-                                                // Export button
-                                                IconButton(
-                                                  icon: Icon(Icons.upload_outlined,
-                                                    color: Theme.of(context).primaryColor,
-                                                    size: 24,
-                                                  ),
-                                                  onPressed: () => _handleExport(context),
-                                                  tooltip: 'Export Tunnels',
-                                                ),
-                                                // Import button
-                                                IconButton(
-                                                  icon: Icon(Icons.download_outlined,
-                                                    color: Theme.of(context).primaryColor,
-                                                    size: 24,
-                                                  ),
-                                                  onPressed: () => _handleImport(context),
-                                                  tooltip: 'Import Tunnels',
-                                                ),
-                                                IconButton(
-                                                  icon: Icon(Icons.add_circle_outline, 
-                                                    color: Theme.of(context).primaryColor,
-                                                    size: 28,
-                                                  ),
-                                                  onPressed: () => _showAddForwardDialog(context),
-                                                  tooltip: 'Add Port Forward',
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Container(
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.grey[100],
-                                                    borderRadius: BorderRadius.circular(20),
-                                                  ),
-                                                  child: Row(
-                                                    children: [
-                                                      IconButton(
-                                                        icon: Icon(Icons.play_arrow_rounded,
-                                                          color: Colors.grey[700],
-                                                        ),
-                                                        onPressed: () {
-                                                          for (var tunnel in provider.tunnels) {
-                                                            _toggleTunnel(tunnel);
-                                                          }
-                                                        },
-                                                        tooltip: 'Start All',
-                                                      ),
-                                                      IconButton(
-                                                        icon: Icon(Icons.stop_rounded,
-                                                          color: Colors.grey[700],
-                                                        ),
-                                                        onPressed: () {
-                                                          for (var tunnel in provider.tunnels) {
-                                                            _toggleTunnel(tunnel);
-                                                          }
-                                                        },
-                                                        tooltip: 'Stop All',
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 16),
-                                        // Active Forwards List
-                                        Expanded(
-                                          child: provider.tunnels.isEmpty
-                                              ? Center(
-                                                  child: Column(
-                                                    mainAxisAlignment: MainAxisAlignment.center,
-                                                    children: [
-                                                      Icon(Icons.cloud_off_outlined, 
-                                                        size: 48, 
-                                                        color: Colors.grey[400],
-                                                      ),
-                                                      const SizedBox(height: 16),
-                                                      Text(
-                                                        'No saved tunnels',
-                                                        style: TextStyle(
-                                                          color: Colors.grey[600],
-                                                          fontSize: 16,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                )
-                                              : ListView.builder(
-                                                  itemCount: provider.tunnels.length,
-                                                  itemBuilder: (context, index) {
-                                                    final tunnel = provider.tunnels[index];
-                                                    return TunnelListItem(
-                                                      tunnel: tunnel,
-                                                      onToggle: () => _toggleTunnel(tunnel),
-                                                      onEdit: () => _showEditDialog(context, tunnel),
-                                                      onDelete: () => _showDeleteDialog(context, tunnel),
-                                                      onLaunch: () => provider.launchConnection(tunnel),
-                                                    );
-                                                  },
-                                                ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-
-                              // Logs Section
-                              Expanded(
-                                flex: 1,
-                                child: Card(
-                                  margin: const EdgeInsets.only(left: 8, right: 16, bottom: 16),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final isNarrow = constraints.maxWidth < 800;
+                              if (isNarrow) {
+                                return SingleChildScrollView(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
                                     children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                        decoration: BoxDecoration(
-                                          color: Colors.grey[50],
-                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                        ),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Row(
-                                              children: [
-                                                Icon(
-                                                  Icons.article_outlined,
-                                                  size: 20,
-                                                  color: Colors.grey[700],
-                                                ),
-                                                const SizedBox(width: 8),
-                                                const Text(
-                                                  'Logs',
-                                                  style: TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 16),
-                                                DropdownButton<LogCategory?>(
-                                                  value: _selectedCategory,
-                                                  hint: const Text('All Categories'),
-                                                  items: [
-                                                    const DropdownMenuItem<LogCategory?>(
-                                                      value: null,
-                                                      child: Text('All Categories'),
-                                                    ),
-                                                    ...LogCategory.values.map((category) {
-                                                      return DropdownMenuItem<LogCategory?>(
-                                                        value: category,
-                                                        child: Text(category.name.toUpperCase()),
-                                                      );
-                                                    }).toList(),
-                                                  ],
-                                                  onChanged: (LogCategory? value) {
-                                                    setState(() {
-                                                      _selectedCategory = value;
-                                                    });
-                                                  },
-                                                ),
-                                              ],
-                                            ),
-                                            Row(
-                                              children: [
-                                                IconButton(
-                                                  icon: Icon(
-                                                    Icons.copy_outlined,
-                                                    size: 20,
-                                                    color: Colors.grey[700],
-                                                  ),
-                                                  onPressed: () {
-                                                    final logs = LogService().getLogsByCategory(_selectedCategory).map((log) => log.toString()).join('\n');
-                                                    if (logs.isNotEmpty) {
-                                                      Clipboard.setData(ClipboardData(text: logs));
-                                                      ScaffoldMessenger.of(context).showSnackBar(
-                                                        const SnackBar(
-                                                          content: Text('Logs copied to clipboard'),
-                                                          duration: Duration(seconds: 2),
-                                                        ),
-                                                      );
-                                                    }
-                                                  },
-                                                  tooltip: 'Copy logs',
-                                                ),
-                                                IconButton(
-                                                  icon: Icon(
-                                                    Icons.delete_outline_rounded,
-                                                    size: 20,
-                                                    color: Colors.grey[700],
-                                                  ),
-                                                  onPressed: () => LogService().clearLogs(),
-                                                  tooltip: 'Clear logs',
-                                                ),
-                                              ],
-                                            ),
-                                          ],
-                                        ),
+                                      SizedBox(
+                                        height: 380,
+                                        child: _buildPortForwardingCard(context, provider),
                                       ),
-                                      Expanded(
-                                        child: ValueListenableBuilder<LogCategory?>(
-                                          valueListenable: ValueNotifier(_selectedCategory),
-                                          builder: (context, category, _) {
-                                            return AnimatedBuilder(
-                                              animation: LogService(),
-                                              builder: (context, _) {
-                                                final logs = LogService().getLogsByCategory(category);
-                                                return Container(
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.grey[50],
-                                                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                                                  ),
-                                                  child: SingleChildScrollView(
-                                                    padding: const EdgeInsets.all(16),
-                                                    child: SelectableText(
-                                                      logs.reversed.map((log) => log.toString()).join('\n'),
-                                                      style: TextStyle(
-                                                        fontFamily: 'monospace',
-                                                        fontSize: 12,
-                                                        color: Colors.grey[800],
-                                                        height: 1.5,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                );
-                                              },
-                                            );
-                                          },
-                                        ),
+                                      SizedBox(
+                                        height: 380,
+                                        child: _buildLogsCard(context),
                                       ),
                                     ],
                                   ),
-                                ),
-                              ),
-                            ],
+                                );
+                              }
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    flex: 1,
+                                    child: _buildPortForwardingCard(context, provider),
+                                  ),
+                                  Expanded(
+                                    flex: 1,
+                                    child: _buildLogsCard(context),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                       ],
                     ),
         );
       },
+    );
+  }
+
+  Widget _buildPortForwardingCard(BuildContext context, TunnelProvider provider) {
+    return Card(
+      margin: const EdgeInsets.only(left: 16, right: 8, bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Domain Access',
+                    style: Theme.of(context).textTheme.titleLarge,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.upload_outlined, color: Theme.of(context).primaryColor),
+                      tooltip: 'Export',
+                      onPressed: () => _handleExport(context),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.download_outlined, color: Theme.of(context).primaryColor),
+                      tooltip: 'Import',
+                      onPressed: () => _handleImport(context),
+                    ),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.play_arrow_rounded, color: Colors.grey[700]),
+                            tooltip: 'Start All',
+                            onPressed: () {
+                              for (var tunnel in provider.tunnels) {
+                                if (!tunnel.isRunning) _toggleTunnel(tunnel);
+                              }
+                            },
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.stop_rounded, color: Colors.grey[700]),
+                            tooltip: 'Stop All',
+                            onPressed: () {
+                              for (var tunnel in provider.tunnels) {
+                                if (tunnel.isRunning) _toggleTunnel(tunnel);
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.add_circle_outline, color: Theme.of(context).primaryColor),
+                      tooltip: 'Add Access',
+                      onPressed: () => _showAddForwardDialog(context),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: provider.tunnels.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_road_outlined, size: 48, color: Colors.grey[400]),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No saved domain forwards',
+                            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Tap + to add one',
+                            style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: provider.tunnels.length,
+                      itemBuilder: (context, index) {
+                        final tunnel = provider.tunnels[index];
+                        return TunnelListItem(
+                          tunnel: tunnel,
+                          onToggle: () => _toggleTunnel(tunnel),
+                          onEdit: () => _showEditDialog(context, tunnel),
+                          onDelete: () => _showDeleteDialog(context, tunnel),
+                          onLaunch: () => provider.launchConnection(tunnel),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogsCard(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(left: 8, right: 16, bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.article_outlined, size: 20, color: Colors.grey[700]),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Logs',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(width: 16),
+                    DropdownButton<LogCategory?>(
+                      value: _selectedCategory,
+                      underline: const SizedBox(),
+                      hint: Text('All', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                      isDense: true,
+                      items: [
+                        DropdownMenuItem<LogCategory?>(
+                          value: null,
+                          child: Text('All', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                        ),
+                        ...LogCategory.values.map((category) {
+                          return DropdownMenuItem<LogCategory?>(
+                            value: category,
+                            child: Text(
+                              category.name.toUpperCase(),
+                              style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                            ),
+                          );
+                        }),
+                      ],
+                      onChanged: (LogCategory? value) {
+                        setState(() {
+                          _selectedCategory = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    TextButton.icon(
+                      icon: Icon(Icons.copy_outlined, size: 18, color: Colors.grey[700]),
+                      onPressed: () {
+                        final text = LogService()
+                            .getLogsByCategory(_selectedCategory)
+                            .map((l) => l.toString())
+                            .join('\n');
+                        if (text.isNotEmpty) {
+                          Clipboard.setData(ClipboardData(text: text));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Logs copied to clipboard'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                      label: Text('Copy', style: TextStyle(color: Colors.grey[800], fontSize: 13)),
+                    ),
+                    TextButton.icon(
+                      icon: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.grey[700]),
+                      onPressed: () {
+                        LogService().clearLogs();
+                        setState(() {});
+                      },
+                      label: Text('Clear', style: TextStyle(color: Colors.grey[800], fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: AnimatedBuilder(
+              animation: LogService(),
+              builder: (context, _) {
+                final logsList = LogService().getLogsByCategory(_selectedCategory).toList();
+                final logs = logsList.reversed.toList();
+                return Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                  ),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: logs.length,
+                    itemBuilder: (context, index) {
+                      final log = logs[index];
+                      return SelectableText(
+                        log.toString(),
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          color: Colors.grey[800],
+                          height: 1.5,
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -447,7 +457,7 @@ class _HomePageState extends State<HomePage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Add Port Forward'),
+        title: const Text('Add Domain Access'),
         content: Form(
           key: formKey,
           child: Column(
@@ -466,6 +476,7 @@ class _HomePageState extends State<HomePage> {
                 },
                 onSaved: (value) => domain = value!,
               ),
+              const SizedBox(height: 16),
               TextFormField(
                 decoration: const InputDecoration(
                   labelText: 'Local Port',
@@ -484,6 +495,7 @@ class _HomePageState extends State<HomePage> {
                 },
                 onSaved: (value) => port = value!,
               ),
+              const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(
                   labelText: 'Protocol',
@@ -533,7 +545,7 @@ class _HomePageState extends State<HomePage> {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Tunnel added successfully'),
+                      content: Text('Domain access added successfully'),
                     ),
                   );
                 }
@@ -547,11 +559,208 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showEditDialog(BuildContext context, Tunnel tunnel) {
+    final formKey = GlobalKey<FormState>();
+    final domainController = TextEditingController(text: tunnel.domain);
+    final portController = TextEditingController(text: tunnel.port);
+    final remotePathController = TextEditingController(text: tunnel.remotePath ?? '');
+    final usernameController = TextEditingController();
+    final passwordController = TextEditingController();
+    // These must live in the outer closure so they survive StatefulBuilder rebuilds
+    String protocol = tunnel.protocol;
+    bool saveCredentials = tunnel.saveCredentials;
+
+    // Load saved credentials asynchronously if needed
+    if (tunnel.saveCredentials && tunnel.protocol == 'SMB') {
+      SecureStorageService.getUsername(tunnel.domain).then((u) {
+        if (u != null) usernameController.text = u;
+      });
+      SecureStorageService.getPassword(tunnel.domain).then((p) {
+        if (p != null) passwordController.text = p;
+      });
+    }
+
     showDialog(
       context: context,
-      builder: (context) => TunnelForm(
-        tunnel: tunnel,
-        isLocal: tunnel.isLocal,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+
+          return AlertDialog(
+            title: const Text('Edit Domain Access'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: domainController,
+                        decoration: const InputDecoration(labelText: 'Domain'),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter a domain';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: portController,
+                        decoration: const InputDecoration(labelText: 'Port'),
+                        keyboardType: TextInputType.number,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter a port';
+                          }
+                          if (int.tryParse(value) == null) {
+                            return 'Please enter a valid number';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        initialValue: protocol,
+                        decoration: const InputDecoration(labelText: 'Protocol'),
+                        items: ['TCP', 'UDP', 'RDP', 'SSH', 'SMB']
+                            .map((label) => DropdownMenuItem(
+                                  value: label,
+                                  child: Text(label),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          // setDialogState triggers a rebuild so SMB fields appear/disappear
+                          setDialogState(() {
+                            protocol = value!;
+                          });
+                        },
+                      ),
+                      if (protocol == 'SMB') ...[
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: remotePathController,
+                          decoration: const InputDecoration(
+                              labelText: 'Remote Path (optional)',
+                              hintText: 'e.g., /share or /c\$/Users/user'),
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: usernameController,
+                          decoration: const InputDecoration(labelText: 'Username'),
+                          validator: (value) {
+                            if (protocol == 'SMB' && (value == null || value.isEmpty)) {
+                              return 'Please enter a username for SMB';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: passwordController,
+                          decoration: const InputDecoration(labelText: 'Password'),
+                          obscureText: true,
+                          validator: (value) {
+                            if (protocol == 'SMB' && (value == null || value.isEmpty)) {
+                              return 'Please enter a password for SMB';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        CheckboxListTile(
+                          title: const Text('Save Credentials Securely'),
+                          value: saveCredentials,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              saveCredentials = value ?? false;
+                            });
+                          },
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  domainController.dispose();
+                  portController.dispose();
+                  remotePathController.dispose();
+                  usernameController.dispose();
+                  passwordController.dispose();
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: cloudflareOrange,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () async {
+                  if (formKey.currentState!.validate()) {
+                    final newTunnel = Tunnel(
+                      id: tunnel.id,
+                      domain: domainController.text,
+                      port: portController.text,
+                      protocol: protocol,
+                      isLocal: tunnel.isLocal,
+                      isRunning: tunnel.isRunning,
+                      remotePath: protocol == 'SMB' ? remotePathController.text : null,
+                      saveCredentials: protocol == 'SMB' ? saveCredentials : false,
+                    );
+
+                    if (protocol == 'SMB') {
+                      if (saveCredentials) {
+                        await SecureStorageService.saveCredentials(
+                          newTunnel.domain,
+                          usernameController.text,
+                          passwordController.text,
+                        );
+                      } else {
+                        await SecureStorageService.deleteCredentials(newTunnel.domain);
+                      }
+                    }
+
+                    // ignore: use_build_context_synchronously
+                    final provider = Provider.of<TunnelProvider>(dialogContext, listen: false);
+                    final wasRunning = tunnel.isRunning;
+                    if (wasRunning) {
+                      await provider.stopForwarding(tunnel.domain);
+                    }
+                    await provider.saveTunnel(newTunnel);
+                    if (wasRunning && dialogContext.mounted) {
+                      await provider.startForwarding(
+                          newTunnel.domain, newTunnel.port,
+                          context: dialogContext);
+                    }
+
+                    domainController.dispose();
+                    portController.dispose();
+                    remotePathController.dispose();
+                    usernameController.dispose();
+                    passwordController.dispose();
+
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        const SnackBar(
+                          content: Text('Domain access updated successfully'),
+                        ),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -560,7 +769,7 @@ class _HomePageState extends State<HomePage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Tunnel'),
+        title: const Text('Delete Domain Access'),
         content: Text('Are you sure you want to delete ${tunnel.domain}?'),
         actions: [
           TextButton(
@@ -586,8 +795,8 @@ class _HomePageState extends State<HomePage> {
       
       // Get the save path from user
       String? savePath = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save Tunnels Configuration',
-        fileName: 'tunnels_config.json',
+        dialogTitle: 'Save Domain Forwards Configuration',
+        fileName: 'domain_forwards_config.json',
         type: FileType.custom,
         allowedExtensions: ['json'],
       );
@@ -603,14 +812,14 @@ class _HomePageState extends State<HomePage> {
         
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Tunnels exported successfully')),
+            const SnackBar(content: Text('Domain forwards exported successfully')),
           );
         }
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to export tunnels: $e')),
+          SnackBar(content: Text('Failed to export domain forwards: $e')),
         );
       }
     }
@@ -628,20 +837,22 @@ class _HomePageState extends State<HomePage> {
       if (result != null && result.files.single.path != null) {
         // Read the JSON data from file
         final jsonStr = await File(result.files.single.path!).readAsString();
-        
+
+        // Capture provider before using context after async gap
+        if (!context.mounted) return;
         // Import the tunnels
         await context.read<TunnelProvider>().importTunnels(jsonStr);
         
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Tunnels imported successfully')),
+            const SnackBar(content: Text('Domain forwards imported successfully')),
           );
         }
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to import tunnels: $e')),
+          SnackBar(content: Text('Failed to import domain forwards: $e')),
         );
       }
     }
@@ -655,32 +866,8 @@ class _HomePageState extends State<HomePage> {
       await provider.stopForwarding(tunnel.domain);
     } else {
       try {
-        // For SMB tunnels, show authentication dialog if needed
-        if (tunnel.protocol == 'SMB') {
-          // If credentials are not saved or not provided, show auth dialog
-          if (!tunnel.saveCredentials || tunnel.username == null || tunnel.password == null) {
-            final updatedTunnel = await showDialog<Tunnel>(
-              context: context,
-              barrierDismissible: false,
-              builder: (context) => SmbAuthDialog(tunnel: tunnel),
-            );
-            
-            // If dialog was cancelled, return
-            if (updatedTunnel == null) return;
-            
-            // Save the updated tunnel with credentials
-            await provider.saveTunnel(updatedTunnel);
-            
-            // Start the tunnel with the updated credentials
-            await provider.startForwarding(updatedTunnel.domain, updatedTunnel.port, context: context);
-          } else {
-            // Start the tunnel with existing credentials
-            await provider.startForwarding(tunnel.domain, tunnel.port, context: context);
-          }
-        } else {
-          // Start non-SMB tunnel normally
-          await provider.startForwarding(tunnel.domain, tunnel.port);
-        }
+        // For SMB tunnels, we let the provider handle the auth dialog flow.
+        await provider.startForwarding(tunnel.domain, tunnel.port, context: context);
       } on WinFspNotInstalledException catch (e) {
         if (!mounted) return;
         

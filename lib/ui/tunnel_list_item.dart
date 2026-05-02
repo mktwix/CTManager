@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/tunnel.dart';
 import '../providers/tunnel_provider.dart';
 import '../services/smb_service.dart';
-import 'dart:io';
+
 import '../main.dart'; // Import main.dart to access the color definitions
 
 class TunnelListItem extends StatelessWidget {
@@ -28,8 +28,10 @@ class TunnelListItem extends StatelessWidget {
     final driveLetter = tunnel.protocol == 'SMB' && tunnel.isRunning
         ? smbService.getDriveLetterForDomain(tunnel.domain)
         : null;
-    final isProcessing =
-        context.watch<TunnelProvider>().processingTunnels.contains(tunnel.domain);
+    final isProcessing = context
+        .watch<TunnelProvider>()
+        .processingTunnels
+        .contains(tunnel.domain);
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -40,11 +42,13 @@ class TunnelListItem extends StatelessWidget {
           children: [
             Text('${tunnel.protocol} - Port: ${tunnel.port}'),
             if (tunnel.protocol == 'SMB' && driveLetter != null)
-              Text('Mounted as $driveLetter:', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('Mounted as $driveLetter:',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+        trailing: Wrap(
+          spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             // Toggle button
             if (isProcessing)
@@ -60,30 +64,43 @@ class TunnelListItem extends StatelessWidget {
                 ),
               )
             else
-              IconButton(
+              TextButton.icon(
                 icon: Icon(
                   tunnel.isRunning ? Icons.stop_circle : Icons.play_circle,
                   color: tunnel.isRunning ? Colors.red : Colors.green,
                 ),
                 onPressed: onToggle,
-                tooltip: tunnel.isRunning ? 'Stop' : 'Start',
+                label: Text(tunnel.isRunning ? 'Stop' : 'Start',
+                    style: TextStyle(
+                        color: tunnel.isRunning ? Colors.red : Colors.green)),
               ),
             // Launch button (only for running tunnels and non-SMB protocols)
             if (tunnel.isRunning && tunnel.protocol != 'SMB')
-              IconButton(
+              TextButton.icon(
                 icon: const Icon(Icons.launch, color: cloudflareBlue),
                 onPressed: onLaunch,
-                tooltip: 'Launch',
+                label: const Text('Launch',
+                    style: TextStyle(color: cloudflareBlue)),
               ),
             // Open Explorer button (only for running SMB tunnels)
-            if (tunnel.isRunning && tunnel.protocol == 'SMB' && driveLetter != null)
-              IconButton(
+            if (tunnel.isRunning &&
+                tunnel.protocol == 'SMB' &&
+                driveLetter != null)
+              TextButton.icon(
                 icon: const Icon(Icons.folder_open, color: cloudflareBlue),
-                onPressed: () {
-                  // Open Windows Explorer to the mounted drive
-                  Process.run('explorer.exe', ['$driveLetter:'], runInShell: true);
+                onPressed: () async {
+                  try {
+                    await smbService.openDriveInExplorer(driveLetter);
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error: $e')),
+                      );
+                    }
+                  }
                 },
-                tooltip: 'Open in Explorer',
+                label: const Text('Explorer',
+                    style: TextStyle(color: cloudflareBlue)),
               ),
             // Edit button
             IconButton(
@@ -102,4 +119,4 @@ class TunnelListItem extends StatelessWidget {
       ),
     );
   }
-} 
+}

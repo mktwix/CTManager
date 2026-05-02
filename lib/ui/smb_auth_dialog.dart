@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/tunnel.dart';
+import '../services/secure_storage_service.dart';
 
 class SmbAuthDialog extends StatefulWidget {
   final Tunnel tunnel;
 
-  const SmbAuthDialog({
-    super.key,
-    required this.tunnel,
-  });
+  const SmbAuthDialog({super.key, required this.tunnel});
 
   @override
   State<SmbAuthDialog> createState() => _SmbAuthDialogState();
@@ -22,9 +20,23 @@ class _SmbAuthDialogState extends State<SmbAuthDialog> {
   @override
   void initState() {
     super.initState();
-    _usernameController = TextEditingController(text: widget.tunnel.username ?? '');
-    _passwordController = TextEditingController(text: widget.tunnel.password ?? '');
+    _usernameController = TextEditingController();
+    _passwordController = TextEditingController();
     _saveCredentials = widget.tunnel.saveCredentials;
+
+    // Load saved credentials if they exist
+    if (_saveCredentials) {
+      _loadCredentials();
+    }
+  }
+
+  Future<void> _loadCredentials() async {
+    final username = await SecureStorageService.getUsername(widget.tunnel.domain);
+    final password = await SecureStorageService.getPassword(widget.tunnel.domain);
+    setState(() {
+      _usernameController.text = username ?? '';
+      _passwordController.text = password ?? '';
+    });
   }
 
   @override
@@ -37,51 +49,45 @@ class _SmbAuthDialogState extends State<SmbAuthDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('SMB Authentication'),
+      title: Text('SMB Authentication for ${widget.tunnel.domain}'),
       content: Form(
         key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Enter credentials for ${widget.tunnel.domain}'),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _usernameController,
-                decoration: const InputDecoration(labelText: 'Username'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a username';
-                  }
-                  return null;
-                },
-              ),
-              TextFormField(
-                controller: _passwordController,
-                decoration: const InputDecoration(labelText: 'Password'),
-                obscureText: true,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a password';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                title: const Text('Save Credentials'),
-                value: _saveCredentials,
-                onChanged: (value) {
-                  setState(() {
-                    _saveCredentials = value ?? false;
-                  });
-                },
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-            ],
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _usernameController,
+              decoration: const InputDecoration(labelText: 'Username'),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter a username';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _passwordController,
+              decoration: const InputDecoration(labelText: 'Password'),
+              obscureText: true,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter a password';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            CheckboxListTile(
+              title: const Text('Save Credentials'),
+              value: _saveCredentials,
+              onChanged: (value) {
+                setState(() {
+                  _saveCredentials = value ?? false;
+                });
+              },
+            ),
+          ],
         ),
       ),
       actions: [
@@ -90,14 +96,26 @@ class _SmbAuthDialogState extends State<SmbAuthDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
+          onPressed: () async {
             if (_formKey.currentState!.validate()) {
-              final updatedTunnel = widget.tunnel.copyWith(
-                username: _usernameController.text,
-                password: _passwordController.text,
-                saveCredentials: _saveCredentials,
-              );
-              Navigator.of(context).pop(updatedTunnel);
+              final username = _usernameController.text;
+              final password = _passwordController.text;
+
+              if (_saveCredentials) {
+                await SecureStorageService.saveCredentials(widget.tunnel.domain, username, password);
+              } else {
+                // If the user unchecks the box, delete any previously saved credentials
+                await SecureStorageService.deleteCredentials(widget.tunnel.domain);
+              }
+
+              // Return the credentials for the current session
+              if (!mounted) return;
+              // ignore: use_build_context_synchronously
+              Navigator.of(context).pop({
+                'username': username,
+                'password': password,
+                'saveCredentials': _saveCredentials,
+              });
             }
           },
           child: const Text('Connect'),

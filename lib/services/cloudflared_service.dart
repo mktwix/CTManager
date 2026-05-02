@@ -2,6 +2,9 @@
 
 import 'dart:io';
 import 'dart:convert';
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
+import 'package:win32/win32.dart';
 import '../models/tunnel.dart';
 import 'package:logger/logger.dart';
 import 'package:path/path.dart' as p;
@@ -19,6 +22,96 @@ class CloudflaredService {
   final Map<int, Process> _processes = {};
   final Map<String, Tunnel> _activeTunnels = {};
   final Map<int, int> _cloudflaredPids = {};
+  // Enhanced tracking with unique connection identifiers
+  final Map<String, int> _connectionPids = {}; // domain:port -> pid
+  final Map<String, Process> _connectionProcesses = {}; // domain:port -> process
+  final Map<String, String> _connectionStates = {}; // domain:port -> state
+
+  // Helper method to generate unique connection key
+  String _getConnectionKey(String domain, String port) {
+    return '$domain:$port';
+  }
+
+  // Helper method to check if a connection is running
+  bool _isConnectionRunning(String domain, String port) {
+    final key = _getConnectionKey(domain, port);
+    return _connectionStates[key] == 'running';
+  }
+
+  // Helper method to set connection state
+  void _setConnectionState(String domain, String port, String state) {
+    final key = _getConnectionKey(domain, port);
+    _connectionStates[key] = state;
+    LogService().info('Connection $key state set to: $state');
+  }
+
+  // Helper method to clean up connection resources
+  void _cleanupConnection(String domain, String port) {
+    final key = _getConnectionKey(domain, port);
+    _connectionPids.remove(key);
+    _connectionProcesses.remove(key);
+    _connectionStates.remove(key);
+    LogService().info('Cleaned up resources for connection: $key');
+  }
+
+  // Helper method to validate connection state before operations
+  bool _validateConnectionState(String domain, String port, String operation) {
+    final key = _getConnectionKey(domain, port);
+    final currentState = _connectionStates[key];
+    
+    // For new connections (null state), allow start operations and stop operations
+    if (currentState == null) {
+      if (operation == 'start') {
+        LogService().info('New connection $key - allowing start operation');
+        return true;
+      } else if (operation == 'stop') {
+        LogService().info('Connection $key not tracked - allowing stop operation (may be legacy connection)');
+        return true;
+      } else {
+        LogService().warning('Connection $key not found for $operation operation');
+        return false;
+      }
+    }
+    
+    // Validate state transitions
+    switch (operation) {
+      case 'start':
+        if (currentState == 'running') {
+          LogService().warning('Connection $key is already running, cannot start');
+          return false;
+        }
+        if (currentState == 'starting') {
+          LogService().warning('Connection $key is already starting, cannot start again');
+          return false;
+        }
+        break;
+      case 'stop':
+        if (currentState != 'running') {
+          LogService().warning('Connection $key is not running (state: $currentState), cannot stop');
+          return false;
+        }
+        break;
+      case 'restart':
+        // Allow restart from any state
+        break;
+      default:
+        LogService().warning('Unknown operation: $operation');
+        return false;
+    }
+    
+    return true;
+  }
+
+  // Helper method to get connection status
+  String getConnectionStatus(String domain, String port) {
+    final key = _getConnectionKey(domain, port);
+    return _connectionStates[key] ?? 'unknown';
+  }
+
+  // Helper method to get all active connections
+  Map<String, String> getAllConnectionStates() {
+    return Map.from(_connectionStates);
+  }
 
   // Check if cloudflared is installed
   Future<bool> isCloudflaredInstalled() async {
@@ -151,19 +244,44 @@ class CloudflaredService {
   Future<bool> startPortForwarding(String domain, String port) async {
     try {
       final portNum = int.parse(port);
+      final connectionKey = _getConnectionKey(domain, port);
       LogService().info('Starting port forwarding process...');
-      LogService().info('Domain: $domain, Port: $port');
+      LogService().info('Domain: $domain, Port: $port, Connection Key: $connectionKey');
       
-      // Check if port is available
-      if (!await checkPortAvailability(portNum)) {
-        LogService().error('ERROR: Port $port is already in use');
+      // Validate connection state before starting
+      if (!_validateConnectionState(domain, port, 'start')) {
         return false;
       }
       
-      // Check for existing process
-      if (_processes.containsKey(portNum)) {
-        LogService().warning('Port $port already has a running process');
+      // Check if this specific connection is already running
+      if (_isConnectionRunning(domain, port)) {
+        LogService().warning('Connection $connectionKey is already running');
         return true; // Already running
+      }
+      
+      // Check if port is available (but only if no other connection is using it)
+      if (!await checkPortAvailability(portNum)) {
+        // Check if the port is being used by another connection
+        final conflictingConnection = _connectionPids.entries
+            .where((entry) => entry.key != connectionKey)
+            .any((entry) => entry.value != 0);
+        
+        if (conflictingConnection) {
+          LogService().error('ERROR: Port $port is already in use by another connection');
+          return false;
+        }
+        
+        // If port is in use but not by our connections, it might be an orphaned process
+        LogService().warning('Port $port is in use by an external or orphaned process. Attempting to kill it...');
+        await _killProcessOnPort(portNum);
+        
+        // Wait a moment for the OS to free the port
+        await Future.delayed(const Duration(milliseconds: 1500));
+        
+        if (!await checkPortAvailability(portNum)) {
+          LogService().error('ERROR: Port $port is still in use after attempted kill.');
+          return false;
+        }
       }
 
       // Get cloudflared path
@@ -174,24 +292,33 @@ class CloudflaredService {
       }
       LogService().info('Found cloudflared at: $cloudflaredPath');
 
-      // Create and execute the VBS script
-      LogService().info('Executing cloudflared command...');
-      final vbsPath = await _createVbsScript(cloudflaredPath, domain, port);
-      if (vbsPath == null) {
-        LogService().error('ERROR: Failed to create VBS script');
-        return false;
-      }
-
-      // Start the process
-      await Process.run('wscript.exe', [vbsPath]);
+      // Set connection state to starting
+      _setConnectionState(domain, port, 'starting');
       
-      // Short delay to allow process to start
+      final process = await Process.start(
+        cloudflaredPath,
+        [
+          'access', 'tcp',
+          '--hostname', domain,
+          '--url', 'tcp://localhost:$port'
+        ],
+        runInShell: false,
+      );
+      
+      final processId = process.pid;
+      _connectionProcesses[connectionKey] = process;
+      
+      // Track this specific connection
+      _connectionPids[connectionKey] = processId;
+      _cloudflaredPids[portNum] = processId; // Keep legacy tracking for compatibility
+      LogService().info('Started cloudflared process for connection $connectionKey with PID $processId');
+      
       await Future.delayed(const Duration(milliseconds: 500));
       
-      // Quick connection check
-      if (await _checkTunnelConnection(domain)) {
+      // Verify the connection is working
+      if (!await checkPortAvailability(portNum)) {
         LogService().system('Tunnel started successfully (port is in use)');
-        // Add to active tunnels
+        _setConnectionState(domain, port, 'running');
         _activeTunnels[domain] = Tunnel(
           domain: domain,
           port: port,
@@ -201,6 +328,8 @@ class CloudflaredService {
         return true;
       } else {
         LogService().error('ERROR: Tunnel failed to start (port still available)');
+        _setConnectionState(domain, port, 'failed');
+        _cleanupConnection(domain, port);
         return false;
       }
     } catch (e) {
@@ -209,21 +338,37 @@ class CloudflaredService {
     }
   }
 
-  Future<String?> _createVbsScript(String cloudflaredPath, String domain, String port) async {
+  int _startHiddenProcess(String command) {
+    final lpApplicationName = command.toNativeUtf16();
+    final si = calloc<STARTUPINFO>();
+    final pi = calloc<PROCESS_INFORMATION>();
+    si.ref.cb = sizeOf<STARTUPINFO>();
+    si.ref.dwFlags = STARTF_USESHOWWINDOW;
+    si.ref.wShowWindow = SW_HIDE;
+
     try {
-      final tempDir = await Directory.systemTemp.createTemp('cloudflared_');
-      final vbsFile = File('${tempDir.path}\\run_cloudflared.vbs');
-      
-      // Create VBS script that runs the command completely hidden
-      await vbsFile.writeAsString('''
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://localhost:$port", 0, False
-''');
-      
-      return vbsFile.path;
-    } catch (e) {
-      _logger.e('Error creating VBS file: $e');
-      return null;
+      if (CreateProcess(
+            nullptr,
+            lpApplicationName,
+            nullptr,
+            nullptr,
+            FALSE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            nullptr,
+            si,
+            pi,
+          ) ==
+          FALSE) {
+        final error = GetLastError();
+        LogService().error('Failed to create process: $error');
+        return 0;
+      }
+      return pi.ref.dwProcessId;
+    } finally {
+      free(lpApplicationName);
+      free(si);
+      free(pi);
     }
   }
 
@@ -258,107 +403,89 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
   Future<void> stopPortForwarding(String port) async {
     try {
       final portNum = int.parse(port);
-      LogService().info('Starting process termination for port $port');
+      LogService().info('Attempting to stop port forwarding on port $port');
 
-      // Initial state logging
-      final initialPortCheck = await checkPortAvailability(portNum);
-      LogService().info('Initial port state - Port $port is ${initialPortCheck ? "available" : "in use"}');
-      LogService().info('Current _cloudflaredPids map: $_cloudflaredPids');
-      LogService().info('Current _processes map: $_processes');
-      LogService().info('Current _activeTunnels map: $_activeTunnels');
-
-      // Get all running cloudflared processes
-      final result = await Process.run('powershell', [
-        'Get-CimInstance Win32_Process -Filter "Name = \'cloudflared.exe\'" | Select-Object ProcessId,CommandLine | ConvertTo-Json'
-      ]);
-
-      if (result.stdout.toString().trim().isNotEmpty) {
-        LogService().info('Found running cloudflared processes: ${result.stdout.toString().trim()}');
-      } else {
-        LogService().info('No running cloudflared processes found via Get-CimInstance');
-      }
-
-      // Try to kill the process if we have its PID
-      final cloudflaredPid = _cloudflaredPids[portNum];
-      if (cloudflaredPid != null) {
-        LogService().info('Found stored PID $cloudflaredPid for port $port');
-
-        // Check if the process is still running
-        final processCheckResult = await Process.run(
-          'powershell',
-          ['Get-Process -Id $cloudflaredPid -ErrorAction SilentlyContinue | Select-Object Id | ConvertTo-Json'],
-        );
-
-        LogService().info('Process check result: ${processCheckResult.stdout.toString().trim()}');
-
-        // Kill the process
-        final killResult = await Process.run(
-          'powershell',
-          ['Stop-Process -Id $cloudflaredPid -Force -ErrorAction SilentlyContinue'],
-        );
-
-        LogService().info('Kill process result: ${killResult.stdout.toString().trim()}');
-
-        if (killResult.exitCode == 0) {
-          // More detailed port availability checking
-          for (int i = 0; i < 5; i++) {
-            await Future.delayed(const Duration(milliseconds: 200));
-            final portCheck = await checkPortAvailability(portNum);
-            LogService().info('Port availability check ${i + 1}/5: ${portCheck ? "available" : "still in use"}');
-            
-            if (portCheck) {
-              LogService().system('Process successfully terminated and port is available');
-              _cloudflaredPids.remove(portNum);
-              _processes.remove(portNum);
-              _activeTunnels.removeWhere((domain, tunnel) => tunnel.port == port);
-              
-              // Verify cleanup
-              LogService().info('After cleanup - _cloudflaredPids: $_cloudflaredPids');
-              LogService().info('After cleanup - _processes: $_processes');
-              LogService().info('After cleanup - _activeTunnels: $_activeTunnels');
-              return;
-            }
-          }
-          LogService().warning('Port still in use after killing process with PID $cloudflaredPid');
-        } else {
-          LogService().error('Failed to kill process with PID $cloudflaredPid');
-        }
-      } else {
-        LogService().warning('No stored PID found for port $port');
-      }
-
-      // If we're here, either no PID was found or the kill wasn't successful
-      LogService().info('Attempting taskkill as fallback');
-      final taskkillResult = await Process.run(
-        'taskkill',
-        ['/F', '/IM', 'cloudflared.exe', '/FI', 'USERNAME ne SYSTEM'],
-        runInShell: true
-      );
-      LogService().info('Taskkill result: ${taskkillResult.stdout.toString().trim()}');
-      LogService().info('Taskkill error output: ${taskkillResult.stderr.toString().trim()}');
+      // Find the connection using this port
+      final connectionEntry = _connectionPids.entries
+          .where((entry) => entry.key.endsWith(':$port'))
+          .firstOrNull;
       
-      // Quick final check with more logging
-      for (int i = 0; i < 5; i++) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        final portCheck = await checkPortAvailability(portNum);
-        LogService().info('Final port check ${i + 1}/5: ${portCheck ? "available" : "still in use"}');
+      if (connectionEntry != null) {
+        final connectionKey = connectionEntry.key;
+        final pid = connectionEntry.value;
+        LogService().info('Found connection $connectionKey with PID $pid. Terminating...');
         
-        if (portCheck) {
-          LogService().system('Port is now available after taskkill');
+        // Set connection state to stopping
+        _setConnectionState(connectionKey.split(':')[0], port, 'stopping');
+        
+        final process = _connectionProcesses[connectionKey];
+        bool killed = false;
+        if (process != null) {
+          killed = process.kill(ProcessSignal.sigterm);
+        } else {
+          killed = Process.killPid(pid, ProcessSignal.sigterm);
+        }
+
+        if (!killed) {
+           LogService().warning('Graceful kill failed, attempting forced kill for PID $pid');
+           if (process != null) {
+              killed = process.kill(ProcessSignal.sigkill);
+           } else {
+              killed = Process.killPid(pid, ProcessSignal.sigkill);
+           }
+        }
+
+        if (killed) {
+          LogService().system('Process with PID $pid terminated successfully.');
+          _cleanupConnection(connectionKey.split(':')[0], port);
           _cloudflaredPids.remove(portNum);
           _processes.remove(portNum);
           _activeTunnels.removeWhere((domain, tunnel) => tunnel.port == port);
-          
-          // Verify final state
-          LogService().info('Final state - _cloudflaredPids: $_cloudflaredPids');
-          LogService().info('Final state - _processes: $_processes');
-          LogService().info('Final state - _activeTunnels: $_activeTunnels');
+
+          // Verify port is now available.
+          await Future.delayed(const Duration(milliseconds: 200));
+          if (await checkPortAvailability(portNum)) {
+            LogService().system('Port $port is now available.');
+          } else {
+            LogService().warning('Port $port is still in use after terminating process.');
+          }
           return;
+        } else {
+          LogService().error('Failed to kill process with PID $pid.');
         }
       }
-      
-      LogService().warning('WARNING: Port $port is still in use after all termination attempts');
-      
+
+      // Fallback to legacy PID tracking
+      if (_cloudflaredPids.containsKey(portNum)) {
+        final pid = _cloudflaredPids[portNum]!;
+        LogService().info('Found stored PID $pid for port $port. Terminating...');
+        
+        bool killed = Process.killPid(pid, ProcessSignal.sigterm);
+        if (!killed) {
+          killed = Process.killPid(pid, ProcessSignal.sigkill);
+        }
+
+        if (killed) {
+          LogService().system('Process with PID $pid terminated successfully.');
+          _cloudflaredPids.remove(portNum);
+          _processes.remove(portNum);
+          _activeTunnels.removeWhere((domain, tunnel) => tunnel.port == port);
+
+          // Verify port is now available.
+          await Future.delayed(const Duration(milliseconds: 200));
+          if (await checkPortAvailability(portNum)) {
+            LogService().system('Port $port is now available.');
+          } else {
+            LogService().warning('Port $port is still in use after terminating process.');
+          }
+          return;
+        } else {
+          LogService().error('Failed to kill process with PID $pid.');
+        }
+      }
+
+      LogService().warning('No stored PID for port $port. Could not stop forwarding.');
+
     } catch (e, stack) {
       _logger.e('Error stopping port forwarding: $e\n$stack');
       LogService().error('Error stopping port forwarding: $e');
@@ -368,7 +495,14 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
 
   Future<bool> startTunnel(Tunnel tunnel) async {
     try {
+      final connectionKey = _getConnectionKey(tunnel.domain, tunnel.port);
       LogService().info('Starting tunnel for ${tunnel.domain}:${tunnel.port}...');
+      
+      // Check if this specific connection is already running
+      if (_isConnectionRunning(tunnel.domain, tunnel.port)) {
+        LogService().warning('Tunnel $connectionKey is already running');
+        return true;
+      }
       
       // Check if cloudflared is installed
       if (!await isCloudflaredInstalled()) {
@@ -393,7 +527,21 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
 
   Future<bool> stopTunnel(Tunnel tunnel) async {
     try {
+      final connectionKey = _getConnectionKey(tunnel.domain, tunnel.port);
       LogService().info('Stopping tunnel for ${tunnel.domain}:${tunnel.port}...');
+      
+      // Validate connection state before stopping
+      if (!_validateConnectionState(tunnel.domain, tunnel.port, 'stop')) {
+        // If validation fails, still try to stop the port forwarding
+        // as it might be a legacy connection not tracked in our state
+        LogService().warning('Connection state validation failed, attempting to stop anyway...');
+      }
+      
+      // Check if this specific connection is running (only if we have state tracking)
+      if (_connectionStates.containsKey(connectionKey) && !_isConnectionRunning(tunnel.domain, tunnel.port)) {
+        LogService().warning('Tunnel $connectionKey is not running according to state tracking');
+        return true;
+      }
       
       // Stop the tunnel
       await stopPortForwarding(tunnel.port);
@@ -408,10 +556,8 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
 
   bool isTunnelRunning(Tunnel tunnel) {
     if (!tunnel.isLocal) return false;
-    // Check if there's a process running for this specific port
-    final portNum = int.tryParse(tunnel.port);
-    if (portNum == null) return false;
-    return _processes.containsKey(portNum);
+    // Check if this specific connection is running
+    return _isConnectionRunning(tunnel.domain, tunnel.port);
   }
 
   Future<String> getLoginCommand() async {
@@ -431,6 +577,39 @@ WshShell.Run """$cloudflaredPath"" access tcp --hostname $domain --url tcp://loc
       return true;
     } catch (e) {
       return false;
+    }
+  }
+
+  Future<void> _killProcessOnPort(int port) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('netstat', ['-aon']);
+        final lines = result.stdout.toString().split('\n');
+        for (final line in lines) {
+          if (line.contains(':$port ') && line.contains('LISTENING')) {
+            final parts = line.trim().split(RegExp(r'\s+'));
+            if (parts.isNotEmpty) {
+              final pid = int.tryParse(parts.last);
+              if (pid != null && pid > 0) {
+                LogService().info('Killing process $pid listening on port $port');
+                await Process.run('taskkill', ['/F', '/PID', pid.toString()]);
+              }
+            }
+          }
+        }
+      } else {
+        final result = await Process.run('lsof', ['-ti:$port']);
+        final pids = result.stdout.toString().trim().split('\n');
+        for (final pidStr in pids) {
+          final pid = int.tryParse(pidStr);
+          if (pid != null && pid > 0) {
+            LogService().info('Killing process $pid listening on port $port');
+            await Process.run('kill', ['-9', pid.toString()]);
+          }
+        }
+      }
+    } catch (e) {
+      LogService().error('Error attempting to kill process on port $port: $e');
     }
   }
 
@@ -624,31 +803,6 @@ ingress:
       port++;
     }
     return port;
-  }
-
-  Future<List<Map<String, String>>> getAvailableTunnels() async {
-    try {
-      ProcessResult result = await Process.run(
-        'cloudflared',
-        ['tunnel', 'list', '--output', 'json'],
-        runInShell: true,
-      );
-
-      if (result.exitCode != 0) {
-        _logger.e('Failed to list tunnels: ${result.stderr}');
-        return [];
-      }
-
-      List<dynamic> tunnels = json.decode(result.stdout.toString());
-      return tunnels.map((tunnel) => {
-        'id': tunnel['id'] as String,
-        'name': tunnel['name'] as String,
-        'url': tunnel['url'] as String? ?? '',
-      }).toList();
-    } catch (e) {
-      _logger.e('Error listing tunnels: $e');
-      return [];
-    }
   }
 
   Future<Map<String, dynamic>?> getLocalTunnelInfo() async {
@@ -942,43 +1096,22 @@ ingress:
   // Add this new method to check for running cloudflared processes
   Future<Map<String, int>> getRunningCloudflaredProcesses() async {
     try {
-      final result = await Process.run(
-        'powershell',
-        [
-          '-Command',
-          '''Get-CimInstance Win32_Process | Where-Object { \$_.Name -eq "cloudflared.exe" } | Select-Object ProcessId,CommandLine | ConvertTo-Json'''
-        ],
-        runInShell: true
-      ).timeout(const Duration(seconds: 10));
-
-      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
-        final Map<String, int> runningTunnels = {};
-        
-        try {
-          final processes = json.decode(result.stdout.toString().trim());
-          final processList = processes is List ? processes : [processes];
-          
-          for (var process in processList) {
-            if (process['CommandLine'] != null) {
-              final commandLine = process['CommandLine'].toString();
-              final hostnameMatch = RegExp(r'--hostname\s+([^\s]+)').firstMatch(commandLine);
-              final portMatch = RegExp(r'localhost:(\d+)').firstMatch(commandLine);
-              
-              if (hostnameMatch != null && portMatch != null) {
-                final domain = hostnameMatch.group(1)!;
-                final port = int.parse(portMatch.group(1)!);
-                runningTunnels[domain] = port;
-              }
+      final Map<String, int> runningTunnels = {};
+      
+      for (final entry in _connectionStates.entries) {
+        if (entry.value == 'running') {
+          final parts = entry.key.split(':');
+          if (parts.length == 2) {
+            final domain = parts[0];
+            final port = int.tryParse(parts[1]);
+            if (port != null) {
+              runningTunnels[domain] = port;
             }
           }
-        } catch (e) {
-          _logger.e('Error parsing process info: $e');
         }
-        
-        return runningTunnels;
       }
       
-      return {};
+      return runningTunnels;
     } catch (e) {
       _logger.e('Error getting running cloudflared processes: ${e.toString()}');
       return {};
@@ -1047,36 +1180,6 @@ ingress:
     } catch (e) {
       LogService().error('Error during login process: $e');
       return false;
-    }
-  }
-
-  // Check if the SMB mount is accessible
-  Future<bool> checkSmbMountStatus(String domain, String port) async {
-    try {
-      LogService().info('Checking SMB mount status for $domain:$port');
-      
-      // CRITICAL: Force connection status to running immediately, without any verification
-      _activeTunnels[domain] = Tunnel(
-        domain: domain,
-        port: port,
-        protocol: 'SMB',
-        isRunning: true
-      );
-      
-      LogService().info('Forcibly set connection status for $domain:$port to RUNNING');
-      
-      // Skip any verification - just consider it running
-      return true;
-    } catch (e) {
-      LogService().error('Error in checkSmbMountStatus: $e');
-      // Even if there's an error, still set status as running
-      _activeTunnels[domain] = Tunnel(
-        domain: domain,
-        port: port,
-        protocol: 'SMB',
-        isRunning: true
-      );
-      return true;
     }
   }
 }

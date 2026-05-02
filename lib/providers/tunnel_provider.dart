@@ -12,6 +12,9 @@ import '../services/database_service.dart';
 import '../services/log_service.dart';
 import '../services/smb_service.dart';
 import '../ui/drive_letter_dialog.dart';
+import '../services/secure_storage_service.dart';
+import '../ui/smb_auth_dialog.dart';
+import '../ui/admin_warning_dialog.dart';
 
 class TunnelProvider extends ChangeNotifier {
   final CloudflaredService _cfService = CloudflaredService();
@@ -69,10 +72,10 @@ class TunnelProvider extends ChangeNotifier {
       final runningProcesses = await _cfService.getRunningCloudflaredProcesses();
       LogService().info('Found running processes: $runningProcesses');
       
-      // Update tunnel states based on running processes
-      for (var tunnel in _tunnels) {
-        final isRunning = runningProcesses.containsKey(tunnel.domain) && 
-                         runningProcesses[tunnel.domain].toString() == tunnel.port;
+      // Update tunnel states based on running processes in parallel
+      await Future.wait(_tunnels.map((tunnel) async {
+        final isRunning = runningProcesses.containsKey(tunnel.domain) &&
+                         runningProcesses[tunnel.domain].toString() == tunnel.port.toString();
         
         LogService().info('Checking tunnel ${tunnel.domain}:${tunnel.port} - Current state: ${tunnel.isRunning}, Detected state: $isRunning');
         
@@ -87,7 +90,20 @@ class TunnelProvider extends ChangeNotifier {
           final updatedTunnel = tunnel.copyWith(isRunning: isRunning);
           await saveTunnel(updatedTunnel);
         }
-      }
+
+        // Also sync SMB mount state if applicable
+        if (tunnel.protocol == 'SMB') {
+          final isMounted = await _smbService.verifyDriveMountedForDomain(tunnel.domain);
+          if (isMounted && !_smbService.isDomainMounted(tunnel.domain)) {
+            // Re-track the drive if found in OS but not in memory
+            final driveLetter = await _smbService.getDriveLetterFromOS(tunnel.domain);
+            if (driveLetter != null) {
+              _smbService.trackMountedDrive(tunnel.domain, driveLetter);
+              LogService().info('Re-tracked SMB mount for ${tunnel.domain} on $driveLetter:');
+            }
+          }
+        }
+      }));
       
       LogService().info('Updated forwarding status map: $_forwardingStatus');
       
@@ -100,16 +116,22 @@ class TunnelProvider extends ChangeNotifier {
       LogService().error('Error checking running tunnel: $e');
       LogService().error('Stack trace: $stack');
     } finally {
-      // _isLoading = false;
-      // notifyListeners();
+      notifyListeners();
     }
   }
 
   Future<bool> startForwarding(String domain, String port, {BuildContext? context}) async {
-    _processingTunnels.add(domain);
-    notifyListeners();
     try {
       LogService().info('Starting port forwarding for $domain:$port');
+      
+      // Check if this specific connection is already being processed
+      if (_processingTunnels.contains(domain)) {
+        LogService().warning('Connection for $domain is already being processed');
+        return false;
+      }
+      
+      _processingTunnels.add(domain);
+      notifyListeners();
       
       // Find the tunnel in the list
       final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
@@ -118,39 +140,71 @@ class TunnelProvider extends ChangeNotifier {
         return false;
       }
       
-      final tunnel = _tunnels[tunnelIndex];
+      Tunnel tunnel = _tunnels[tunnelIndex];
       
-      // Start the cloudflared tunnel
-      final success = await _cfService.startTunnel(tunnel);
-      if (!success) {
-        LogService().error('Failed to start cloudflared tunnel for $domain:$port');
-        return false;
+      // Check if the tunnel is already running
+      if (tunnel.isRunning) {
+        LogService().warning('Tunnel for $domain is already running');
+        return true;
       }
-      
-      // Update the forwarding status immediately 
-      _forwardingStatus[domain] = port;
-      
-      // Update the tunnel status
-      final updatedTunnel = tunnel.copyWith(isRunning: true);
-      await saveTunnel(updatedTunnel);
-      
-      // If this is an SMB tunnel, mount it as a network drive
+
+      // Variables to hold SMB gathering data
+      String? smbUsername;
+      String? smbPassword;
+      String? selectedDriveLetter;
+      bool shouldSaveCredentials = tunnel.saveCredentials;
+
+      // 1. Gather all required inputs FIRST before starting any background processes
       if (tunnel.protocol == 'SMB') {
         try {
-          String? selectedDriveLetter;
+          // Check if running as admin and warn the user
+          final isAdmin = await _smbService.isRunningAsAdmin();
+          if (isAdmin && context != null && context.mounted) {
+            await showDialog(
+              context: context,
+              builder: (context) => const AdminWarningDialog(),
+            );
+          }
+
+          if (tunnel.saveCredentials) {
+            smbUsername = await SecureStorageService.getUsername(tunnel.domain);
+            smbPassword = await SecureStorageService.getPassword(tunnel.domain);
+          }
+
+          // If we don't have credentials, we need to ask the user.
+          if (smbUsername == null || smbPassword == null) {
+            if (context != null && context.mounted) {
+              final result = await showDialog<Map<String, dynamic>>(
+                context: context,
+                builder: (context) => SmbAuthDialog(tunnel: tunnel),
+              );
+
+              if (result != null) {
+                smbUsername = result['username'];
+                smbPassword = result['password'];
+                shouldSaveCredentials = result['saveCredentials'];
+                // Update the tunnel's saveCredentials setting in memory
+                tunnel = tunnel.copyWith(saveCredentials: shouldSaveCredentials);
+              } else {
+                // User cancelled the dialog
+                LogService().warning('SMB authentication cancelled by user.');
+                return false;
+              }
+            } else {
+              LogService().error('Cannot ask for SMB credentials without a build context.');
+              return false;
+            }
+          }
           
-          // If the tunnel has auto-select disabled and a preferred drive letter is set,
-          // use that drive letter
+          // Drive letter selection logic
           if (!tunnel.autoSelectDrive && tunnel.preferredDriveLetter != null) {
-            // Check if the preferred drive letter is available
             final availableDriveLetters = await _smbService.getAvailableDriveLetters();
             if (availableDriveLetters.contains(tunnel.preferredDriveLetter)) {
               selectedDriveLetter = tunnel.preferredDriveLetter;
               LogService().info('Using preferred drive letter: $selectedDriveLetter');
             } else {
-              // Preferred drive letter is not available, show a warning and fall back to auto-select
               LogService().warning('Preferred drive letter ${tunnel.preferredDriveLetter} is not available, falling back to auto-select');
-              if (context != null) {
+              if (context != null && context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Preferred drive letter ${tunnel.preferredDriveLetter} is not available, using auto-select instead'),
@@ -161,40 +215,95 @@ class TunnelProvider extends ChangeNotifier {
             }
           }
           
-          // Show drive letter selection dialog if context is provided and no drive letter is selected yet
-          // and auto-select is not enabled
-          if (selectedDriveLetter == null && context != null && !tunnel.autoSelectDrive) {
+          if (selectedDriveLetter == null && context != null && !tunnel.autoSelectDrive && context.mounted) {
             selectedDriveLetter = await showDialog<String>(
               context: context,
               builder: (context) => DriveLetterDialog(domain: domain),
             );
+            if (selectedDriveLetter == null) {
+              // User cancelled drive letter dialog
+              LogService().warning('Drive letter selection cancelled by user.');
+              return false;
+            }
           }
           
-          // If no drive letter was selected (auto-select or dialog was cancelled),
-          // find an available drive letter automatically
           selectedDriveLetter ??= await _smbService.findAvailableDriveLetter();
           
           if (selectedDriveLetter.isEmpty) {
             LogService().error('No available drive letters for mounting SMB share');
-            // Continue anyway, as the tunnel is still running
-          } else {
-            // Mount the SMB share
-            LogService().info('About to mount SMB share for $domain:$port');
-            final mounted = await _smbService.mountSmbShare(tunnel, selectedDriveLetter);
-            LogService().info('SMB mount process initiated: $mounted for $domain:$port');
-            
-            // Immediately update connection status without waiting for verification
-            LogService().info('Forcing connection status update for $domain:$port');
-            await _cfService.checkSmbMountStatus(domain, port);
-            
-            // Log drive mount status
-            final driveMounted = _smbService.isDomainMounted(domain);
-            LogService().info('Drive mounting in progress: $driveMounted for $domain at $selectedDriveLetter:');
+            if (context != null && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No available drive letters to mount SMB share.'),
+                  duration: Duration(seconds: 5),
+                ),
+              );
+            }
+            return false;
           }
         } catch (e) {
-          // Log but don't fail if mounting has issues
+          LogService().error('Error during SMB input gathering process: $e');
+          return false;
+        }
+      }
+      
+      // 2. Start the cloudflared tunnel
+      final success = await _cfService.startTunnel(tunnel);
+      if (!success) {
+        LogService().error('Failed to start cloudflared tunnel for $domain:$port');
+        return false;
+      }
+      
+      // Update the forwarding status immediately 
+      _forwardingStatus[domain] = port;
+      
+      // Update the tunnel status
+      Tunnel updatedTunnel = tunnel.copyWith(isRunning: true);
+      await saveTunnel(updatedTunnel);
+      
+      // 3. Mount SMB share if applicable
+      if (tunnel.protocol == 'SMB') {
+        try {
+          // Guard: ensure we have a valid drive letter before force-unwrapping
+          if (selectedDriveLetter == null || selectedDriveLetter.isEmpty) {
+            LogService().error('No valid drive letter available for SMB mount.');
+            await _cfService.stopTunnel(updatedTunnel);
+            _forwardingStatus.remove(domain);
+            updatedTunnel = updatedTunnel.copyWith(isRunning: false);
+            await saveTunnel(updatedTunnel);
+            return false;
+          }
+          LogService().info('About to mount SMB share for $domain:$port on $selectedDriveLetter');
+          final mounted = await _smbService.mountSmbShare(updatedTunnel, selectedDriveLetter, smbUsername!, smbPassword!);
+          LogService().info('SMB mount process initiated: $mounted for $domain:$port');
+
+          if (mounted) {
+            // Save credentials to secure storage if requested
+            if (shouldSaveCredentials) {
+              await SecureStorageService.saveCredentials(tunnel.domain, smbUsername!, smbPassword!);
+              LogService().info('Saved credentials for ${tunnel.domain} to secure storage');
+            }
+            
+            final isAccessible = await _smbService.verifyDriveAccessibility(selectedDriveLetter);
+            LogService().info('SMB mount at $selectedDriveLetter: accessibility check returned: $isAccessible');
+            if (!isAccessible) {
+               LogService().warning('SMB mount for $domain may not be accessible.');
+            }
+          } else {
+             LogService().error('SMB mount process failed for $domain. Stopping tunnel.');
+             await _cfService.stopTunnel(updatedTunnel);
+             _forwardingStatus.remove(domain);
+             updatedTunnel = updatedTunnel.copyWith(isRunning: false);
+             await saveTunnel(updatedTunnel);
+             return false;
+          }
+        } catch (e) {
           LogService().error('Error during SMB mounting process: $e');
-          // Continue anyway - the tunnel may still be functional
+          await _cfService.stopTunnel(updatedTunnel);
+          _forwardingStatus.remove(domain);
+          updatedTunnel = updatedTunnel.copyWith(isRunning: false);
+          await saveTunnel(updatedTunnel);
+          return false;
         }
       }
       
@@ -215,10 +324,17 @@ class TunnelProvider extends ChangeNotifier {
   }
 
   Future<bool> stopForwarding(String domain) async {
-    _processingTunnels.add(domain);
-    notifyListeners();
     try {
       LogService().info('Stopping forwarding for $domain');
+      
+      // Check if this specific connection is already being processed
+      if (_processingTunnels.contains(domain)) {
+        LogService().warning('Connection for $domain is already being processed');
+        return false;
+      }
+      
+      _processingTunnels.add(domain);
+      notifyListeners();
       
       // Find the tunnel by domain
       final tunnelIndex = _tunnels.indexWhere((t) => t.domain == domain);
@@ -228,6 +344,12 @@ class TunnelProvider extends ChangeNotifier {
       }
       
       final tunnel = _tunnels[tunnelIndex];
+      
+      // Check if the tunnel is already stopped
+      if (!tunnel.isRunning) {
+        LogService().warning('Tunnel for $domain is already stopped');
+        return true;
+      }
       
       // If this is an SMB tunnel and it's mounted, unmount it first
       if (tunnel.protocol == 'SMB' && _smbService.isDomainMounted(domain)) {
@@ -373,36 +495,8 @@ class TunnelProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> startTunnel(Tunnel tunnel) async {
-    try {
-      _error = null;
-      final success = await _cfService.startPortForwarding(tunnel.domain, tunnel.port);
-      if (success) {
-        final updatedTunnel = tunnel.copyWith(isRunning: true);
-        await saveTunnel(updatedTunnel);
-      } else {
-        _error = 'Failed to start tunnel';
-        notifyListeners();
-      }
-    } catch (e) {
-      _error = 'Error starting tunnel: ${e.toString()}';
-      _logger.e('Error starting tunnel: ${e.toString()}');
-      rethrow;
-    }
-  }
-
-  Future<void> stopTunnel(Tunnel tunnel) async {
-    try {
-      _error = null;
-      await _cfService.stopPortForwarding(tunnel.port);
-      final updatedTunnel = tunnel.copyWith(isRunning: false);
-      await saveTunnel(updatedTunnel);
-    } catch (e) {
-      _error = 'Error stopping tunnel: ${e.toString()}';
-      _logger.e('Error stopping tunnel: ${e.toString()}');
-      rethrow;
-    }
-  }
+  // startTunnel and stopTunnel are legacy methods superseded by
+  // startForwarding / stopForwarding. Removed to avoid confusion.
 
   Future<void> initiateLogin() async {
     try {
@@ -413,6 +507,8 @@ class TunnelProvider extends ChangeNotifier {
   }
 
   // Export tunnels to JSON string
+  // NOTE: is_running is always exported as 0 — a tunnel cannot be "running"
+  // on an import target machine; it must be started explicitly.
   String exportTunnels() {
     try {
       final List<Map<String, dynamic>> tunnelsJson = _tunnels.map((t) => {
@@ -421,7 +517,11 @@ class TunnelProvider extends ChangeNotifier {
         'port': t.port,
         'protocol': t.protocol,
         'is_local': t.isLocal ? 1 : 0,
-        'is_running': t.isRunning ? 1 : 0
+        'is_running': 0, // always 0: running state is not portable
+        'remote_path': t.remotePath,
+        'preferred_drive_letter': t.preferredDriveLetter,
+        'auto_select_drive': t.autoSelectDrive ? 1 : 0,
+        'save_credentials': t.saveCredentials ? 1 : 0,
       }).toList();
       return jsonEncode({'tunnels': tunnelsJson});
     } catch (e) {
@@ -494,7 +594,14 @@ class TunnelProvider extends ChangeNotifier {
 
   Future<void> _cleanupResources() async {
     try {
-      // Stop all forwardings
+      // Unmount any active SMB drives first
+      for (final tunnel in _tunnels) {
+        if (tunnel.protocol == 'SMB' && tunnel.isRunning && _smbService.isDomainMounted(tunnel.domain)) {
+          await _smbService.unmountDrive(tunnel.domain);
+        }
+      }
+
+      // Stop all cloudflared port forwardings
       for (final entry in _forwardingStatus.entries) {
         await _cfService.stopPortForwarding(entry.value);
       }

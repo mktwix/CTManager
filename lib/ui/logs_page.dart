@@ -22,21 +22,17 @@ class _LogsPageState extends State<LogsPage> {
   }
 
   void _onLogServiceChanged() {
-    print('LogsPage: _onLogServiceChanged called');
     _updateLogs();
   }
 
   void _updateLogs() {
-    print('LogsPage: _updateLogs called with category: $_selectedCategory');
     final filteredLogs = logService.getLogsByCategory(_selectedCategory);
-    print('LogsPage: Got ${filteredLogs.length} logs after filtering');
     setState(() {
       _currentLogs = List<LogEntry>.from(filteredLogs);
     });
   }
 
   void _onCategoryChanged(LogCategory? category) {
-    print('LogsPage: Category changed to: ${category?.name ?? "ALL"}');
     _selectedCategory = category;
     _updateLogs();
   }

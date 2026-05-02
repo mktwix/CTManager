@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
 
 class ErrorScreen extends StatelessWidget {
   final String errorMessage;
@@ -89,16 +91,25 @@ class ErrorScreen extends StatelessWidget {
                   ],
                 ],
                 const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: () {
-                    // Restart the app
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/',
-                      (route) => false,
-                    );
-                  },
-                  child: const Text('Retry'),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton.icon(
+                      onPressed: () {
+                        final details = '$errorMessage\n\n${error.toString()}'
+                            '${stackTrace != null ? "\n\n${stackTrace.toString()}" : ""}';
+                        Clipboard.setData(ClipboardData(text: details));
+                      },
+                      icon: const Icon(Icons.copy, size: 18),
+                      label: const Text('Copy Details'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () => exit(0),
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Close & Retry'),
+                    ),
+                  ],
                 ),
               ],
             ),

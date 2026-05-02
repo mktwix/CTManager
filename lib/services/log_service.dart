@@ -104,17 +104,18 @@ class LogService extends ChangeNotifier {
       
       _logFile = File(p.join(logDir.path, 'ctmanager.log'));
       
-      // Load existing logs if file exists
+      // Load existing logs if file exists - limit to last 500 lines for performance
       if (await _logFile!.exists()) {
         try {
           final lines = await _logFile!.readAsLines();
-          for (var line in lines) {
-            if (line.isNotEmpty) {
-              _logs.add(LogEntry.fromLogLine(line));
+          final start = lines.length > 500 ? lines.length - 500 : 0;
+          for (var i = start; i < lines.length; i++) {
+            if (lines[i].isNotEmpty) {
+              _logs.add(LogEntry.fromLogLine(lines[i]));
             }
           }
         } catch (e) {
-          print('Error loading logs: $e');
+          debugPrint('Error loading logs: $e');
         }
       }
     } catch (e) {
@@ -124,25 +125,58 @@ class LogService extends ChangeNotifier {
 
   List<LogEntry> get logs => List.unmodifiable(_logs);
 
+  String _sanitizeMessage(String message) {
+    // Mask cloudflared tokens (usually start with eyJh...)
+    final tokenRegex = RegExp(r'eyJh[a-zA-Z0-9._-]{20,}');
+    return message.replaceAllMapped(tokenRegex, (match) {
+      final token = match.group(0)!;
+      if (token.length > 20) {
+        return '${token.substring(0, 10)}...${token.substring(token.length - 10)}';
+      }
+      return '***TOKEN***';
+    });
+  }
+
+  Future<void>? _writeTask;
+
   void addLog(String message, {LogCategory category = LogCategory.info}) {
+    final sanitizedMessage = _sanitizeMessage(message);
     final entry = LogEntry(
       timestamp: DateTime.now(),
-      message: message,
+      message: sanitizedMessage,
       category: category,
     );
     
     _logs.add(entry);
-    _writeLogToFile(entry.toString());
+    
+    // Use a sequential execution pattern to prevent interleaved writes
+    final logString = entry.toString();
+    if (_writeTask == null) {
+      _writeTask = _writeLogToFile(logString);
+    } else {
+      _writeTask = _writeTask!.then((_) => _writeLogToFile(logString));
+    }
+    
     notifyListeners();
   }
 
   Future<void> _writeLogToFile(String logMessage) async {
     try {
       if (_logFile != null) {
-        await _logFile!.writeAsString('$logMessage\n', mode: FileMode.append);
+        // Check file size and rotate if necessary (5MB limit)
+        if (await _logFile!.exists()) {
+          final size = await _logFile!.length();
+          if (size > 5 * 1024 * 1024) {
+            final oldFile = File('${_logFile!.path}.old');
+            if (await oldFile.exists()) await oldFile.delete();
+            await _logFile!.rename(oldFile.path);
+            _logFile = File(oldFile.path.replaceAll('.old', ''));
+          }
+        }
+        await _logFile!.writeAsString('$logMessage\n', mode: FileMode.append, flush: true);
       }
     } catch (e) {
-      print('Error writing to log file: $e');
+      debugPrint('Error writing to log file: $e');
     }
   }
 

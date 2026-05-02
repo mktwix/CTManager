@@ -3,7 +3,7 @@ import '../services/cloudflared_service.dart';
 
 class TunnelSelectionDialog extends StatefulWidget {
   final String protocol;
-  
+
   const TunnelSelectionDialog({
     super.key,
     required this.protocol,
@@ -17,7 +17,7 @@ class _TunnelSelectionDialogState extends State<TunnelSelectionDialog> {
   final CloudflaredService _cfService = CloudflaredService();
   List<Map<String, String>> _availableTunnels = [];
   bool _isLoading = true;
-  String? _selectedTunnelId;
+  final _selectedTunnel = ValueNotifier<String?>(null);
 
   @override
   void initState() {
@@ -25,13 +25,15 @@ class _TunnelSelectionDialogState extends State<TunnelSelectionDialog> {
     _loadTunnels();
   }
 
-  Future<void> _loadTunnels() async {
-    setState(() {
-      _isLoading = true;
-    });
+  @override
+  void dispose() {
+    _selectedTunnel.dispose();
+    super.dispose();
+  }
 
-    final tunnels = await _cfService.getAvailableTunnels();
-    
+  Future<void> _loadTunnels() async {
+    setState(() => _isLoading = true);
+    final tunnels = await _cfService.listTunnels();
     setState(() {
       _availableTunnels = tunnels;
       _isLoading = false;
@@ -57,44 +59,54 @@ class _TunnelSelectionDialogState extends State<TunnelSelectionDialog> {
                   ElevatedButton.icon(
                     icon: const Icon(Icons.add),
                     label: const Text('Create New Tunnel'),
-                    onPressed: () {
-                      Navigator.of(context).pop('create_new');
-                    },
+                    onPressed: () => Navigator.of(context).pop('create_new'),
                   ),
                   if (_availableTunnels.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     const Text('Or select an existing tunnel:'),
                     const SizedBox(height: 8),
-                    ...ListTile.divideTiles(
-                      context: context,
-                      tiles: _availableTunnels.map((tunnel) => RadioListTile<String>(
-                        title: Text(tunnel['name']!),
-                        subtitle: Text(tunnel['url'] ?? 'No URL'),
-                        value: tunnel['id']!,
-                        groupValue: _selectedTunnelId,
-                        onChanged: (value) {
-                          setState(() {
-                            _selectedTunnelId = value;
-                          });
-                        },
-                      )),
-                    ),
-                    if (_selectedTunnelId != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 16),
-                        child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.of(context).pop({
-                              'type': 'existing',
-                              'tunnelId': _selectedTunnelId,
-                              'tunnel': _availableTunnels.firstWhere(
-                                (t) => t['id'] == _selectedTunnelId,
+                    ValueListenableBuilder<String?>(
+                      valueListenable: _selectedTunnel,
+                      builder: (context, selectedId, _) {
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ..._availableTunnels.map(
+                              (tunnel) => ListTile(
+                                leading: Radio<String>(
+                                  value: tunnel['id']!,
+                                  // ignore: deprecated_member_use
+                                  groupValue: selectedId,
+                                  // ignore: deprecated_member_use
+                                  onChanged: (value) =>
+                                      _selectedTunnel.value = value,
+                                ),
+                                title: Text(tunnel['name']!),
+                                subtitle: Text(tunnel['url'] ?? 'No URL'),
+                                onTap: () =>
+                                    _selectedTunnel.value = tunnel['id'],
                               ),
-                            });
-                          },
-                          child: const Text('Use Selected Tunnel'),
-                        ),
-                      ),
+                            ),
+                            if (selectedId != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 16),
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    Navigator.of(context).pop({
+                                      'type': 'existing',
+                                      'tunnelId': selectedId,
+                                      'tunnel': _availableTunnels.firstWhere(
+                                        (t) => t['id'] == selectedId,
+                                      ),
+                                    });
+                                  },
+                                  child: const Text('Use Selected Tunnel'),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
                   ],
                 ],
               ),
@@ -107,4 +119,4 @@ class _TunnelSelectionDialogState extends State<TunnelSelectionDialog> {
       ],
     );
   }
-} 
+}
